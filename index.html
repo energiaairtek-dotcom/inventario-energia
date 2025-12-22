@@ -36,20 +36,18 @@
 <body class="bg-slate-50 text-slate-900">
     <div id="root"></div>
 
-    <!-- Firebase SDK Scripts as Modules -->
+    <!-- Firebase SDK Scripts -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, updateDoc, deleteDoc, collection, query, onSnapshot, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Exponer Firebase al objeto window para acceso global
         window.FirebaseSDK = {
             initializeApp, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken,
             getFirestore, doc, setDoc, updateDoc, deleteDoc, collection, 
             query, onSnapshot, addDoc, serverTimestamp
         };
         
-        // Disparar evento para avisar a React que Firebase está listo
         window.dispatchEvent(new Event('firebase-ready'));
     </script>
 
@@ -68,10 +66,9 @@
             const [newExit, setNewExit] = useState({ tech: '', itemId: '', qty: '' });
             const [newItem, setNewItem] = useState({ id: '', name: '', stock: '', min: '', unit: 'pza' });
 
-            // Referencias para Firebase para evitar múltiples inicializaciones
             const dbRef = useRef(null);
             const authRef = useRef(null);
-            const appIdRef = useRef('inventario-energia-v1');
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'inventario-energia-v1';
 
             useEffect(() => {
                 const handleReady = () => setSdkReady(true);
@@ -79,74 +76,73 @@
                 return () => window.removeEventListener('firebase-ready', handleReady);
             }, []);
 
-            // Inicialización de Firebase una vez que el SDK esté disponible
             useEffect(() => {
                 if (!sdkReady || !window.FirebaseSDK) return;
 
                 const { initializeApp, getAuth, getFirestore, signInWithCustomToken, signInAnonymously, onAuthStateChanged } = window.FirebaseSDK;
 
-                try {
-                    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
-                    if (!firebaseConfig) {
-                        console.error("Firebase config no encontrada");
-                        setLoading(false);
-                        return;
-                    }
-
-                    const app = initializeApp(firebaseConfig);
-                    authRef.current = getAuth(app);
-                    dbRef.current = getFirestore(app);
-                    appIdRef.current = typeof __app_id !== 'undefined' ? __app_id : 'inventario-energia-v1';
-
-                    const initAuth = async () => {
-                        try {
-                            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                                await signInWithCustomToken(authRef.current, __initial_auth_token);
-                            } else {
-                                await signInAnonymously(authRef.current);
-                            }
-                        } catch (err) {
-                            console.error("Error de autenticación:", err);
+                const initFirebase = async () => {
+                    try {
+                        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+                        
+                        if (!firebaseConfig) {
+                            console.warn("Firebase no configurado. Operando en modo local.");
+                            setLoading(false);
+                            return;
                         }
-                    };
-                    
-                    initAuth();
-                    const unsubscribe = onAuthStateChanged(authRef.current, (u) => {
-                        setUser(u);
+
+                        const app = initializeApp(firebaseConfig);
+                        authRef.current = getAuth(app);
+                        dbRef.current = getFirestore(app);
+
+                        // Autenticación obligatoria antes de cualquier consulta
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(authRef.current, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(authRef.current);
+                        }
+
+                        const unsubscribe = onAuthStateChanged(authRef.current, (u) => {
+                            setUser(u);
+                            setLoading(false);
+                        });
+                        return unsubscribe;
+                    } catch (e) {
+                        console.error("Error en inicialización:", e);
                         setLoading(false);
-                    });
-                    return () => unsubscribe();
-                } catch (e) {
-                    console.error("Error inicializando Firebase:", e);
-                    setLoading(false);
-                }
+                    }
+                };
+                
+                initFirebase();
             }, [sdkReady]);
 
-            // Escucha de datos en tiempo real
+            // Escucha en tiempo real de Firestore
             useEffect(() => {
                 if (!user || !dbRef.current) return;
 
-                const { collection, onSnapshot } = window.FirebaseSDK;
-                const db = dbRef.current;
-                const appId = appIdRef.current;
+                const { collection, onSnapshot, query } = window.FirebaseSDK;
+                
+                // Siguiendo Regla 1: Ruta específica /artifacts/{appId}/public/data/{collection}
+                const invCol = collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'inventory');
+                const histCol = collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'history');
 
-                const invCol = collection(db, 'artifacts', appId, 'public', 'data', 'inventory');
-                const histCol = collection(db, 'artifacts', appId, 'public', 'data', 'history');
+                const unsubInv = onSnapshot(invCol, 
+                    (snapshot) => {
+                        const items = snapshot.docs.map(doc => ({ ...doc.data(), docId: doc.id }));
+                        setInventory(items);
+                    }, 
+                    (err) => console.error("Fallo lectura inventario:", err)
+                );
 
-                const unsubInv = onSnapshot(invCol, (snapshot) => {
-                    const items = snapshot.docs.map(doc => ({ ...doc.data(), docId: doc.id }));
-                    setInventory(items);
-                }, (error) => console.error("Error inv:", error));
-
-                const unsubHist = onSnapshot(histCol, (snapshot) => {
-                    const logs = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-                    const sortedLogs = logs.sort((a, b) => {
-                        const timeA = a.timestamp?.seconds || 0;
-                        const timeB = b.timestamp?.seconds || 0;
-                        return timeB - timeA;
-                    });
-                    setHistory(sortedLogs);
-                }, (error) => console.error("Error hist:", error));
+                const unsubHist = onSnapshot(histCol, 
+                    (snapshot) => {
+                        const logs = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+                        // Regla 2: Ordenar en memoria, no en la consulta
+                        const sortedLogs = logs.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+                        setHistory(sortedLogs);
+                    },
+                    (err) => console.error("Fallo lectura historial:", err)
+                );
 
                 return () => {
                     unsubInv();
@@ -162,15 +158,15 @@
                 const item = inventory.find(i => i.id === newExit.itemId);
                 
                 if (!item || item.stock < Number(newExit.qty)) {
-                    alert("Stock insuficiente o material no válido");
+                    alert("Stock insuficiente.");
                     return;
                 }
 
                 try {
-                    const itemRef = doc(dbRef.current, 'artifacts', appIdRef.current, 'public', 'data', 'inventory', item.docId);
+                    const itemRef = doc(dbRef.current, 'artifacts', appId, 'public', 'data', 'inventory', item.docId);
                     await updateDoc(itemRef, { stock: item.stock - Number(newExit.qty) });
                     
-                    await addDoc(collection(dbRef.current, 'artifacts', appIdRef.current, 'public', 'data', 'history'), {
+                    await addDoc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'history'), {
                         tech: newExit.tech,
                         itemId: newExit.itemId,
                         item: item.name,
@@ -182,7 +178,7 @@
                     setNewExit({ tech: '', itemId: '', qty: '' });
                     setActiveTab('history');
                 } catch (err) {
-                    console.error("Error salida:", err);
+                    console.error("Error procesando salida:", err);
                 }
             };
 
@@ -191,7 +187,7 @@
                 if (!user || !dbRef.current) return;
                 const { collection, addDoc } = window.FirebaseSDK;
                 try {
-                    await addDoc(collection(dbRef.current, 'artifacts', appIdRef.current, 'public', 'data', 'inventory'), {
+                    await addDoc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'inventory'), {
                         ...newItem,
                         id: newItem.id.toUpperCase(),
                         stock: Number(newItem.stock),
@@ -199,18 +195,18 @@
                     });
                     setNewItem({ id: '', name: '', stock: '', min: '', unit: 'pza' });
                 } catch (err) {
-                    console.error("Error agregar:", err);
+                    console.error("Error agregando item:", err);
                 }
             };
 
             const deleteItem = async (docId) => {
                 if (!user || !dbRef.current) return;
                 const { doc, deleteDoc } = window.FirebaseSDK;
-                if(confirm("¿Eliminar este material?")) {
+                if(confirm("¿Eliminar este material permanentemente?")) {
                     try {
-                        await deleteDoc(doc(dbRef.current, 'artifacts', appIdRef.current, 'public', 'data', 'inventory', docId));
+                        await deleteDoc(doc(dbRef.current, 'artifacts', appId, 'public', 'data', 'inventory', docId));
                     } catch (err) {
-                        console.error("Error eliminar:", err);
+                        console.error("Error eliminando:", err);
                     }
                 }
             };
@@ -299,7 +295,7 @@
                                 <div className="bg-gradient-to-br from-blue-600 to-indigo-800 p-8 rounded-[2rem] text-white shadow-2xl relative overflow-hidden">
                                     <div className="relative z-10">
                                         <h3 className="text-3xl font-black leading-none mb-2 tracking-tighter uppercase">ALMACÉN<br/>AIRTEK</h3>
-                                        <p className="text-blue-100/80 text-xs font-bold uppercase tracking-widest italic">Datos en la Nube</p>
+                                        <p className="text-blue-100/80 text-xs font-bold uppercase tracking-widest italic">Persistencia: Activa</p>
                                     </div>
                                     <Icon name="Zap" size={120} className="absolute -right-6 -bottom-6 opacity-20 rotate-12" />
                                 </div>
@@ -333,6 +329,9 @@
                                                 {isAdminMode && <td className="px-6 py-4"><button onClick={()=>deleteItem(item.docId)} className="text-slate-300 hover:text-red-500"><Icon name="Trash2" size={16}/></button></td>}
                                             </tr>
                                         ))}
+                                        {inventory.length === 0 && (
+                                            <tr><td colSpan="4" className="px-6 py-10 text-center text-slate-400 text-xs italic">Cargando inventario...</td></tr>
+                                        )}
                                     </tbody>
                                 </table>
                             </div>
