@@ -48,6 +48,10 @@
         @media print {
             .no-print { display: none !important; }
         }
+
+        select {
+            text-transform: uppercase;
+        }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
@@ -99,6 +103,9 @@
             const [currentSearch, setCurrentSearch] = useState('');
             const [showSearchList, setShowSearchList] = useState(false);
             const [selectedItems, setSelectedItems] = useState([]); 
+
+            // Filter state for History
+            const [filterItemId, setFilterItemId] = useState('all');
 
             // Admin state
             const [newItem, setNewItem] = useState({ id: '', name: '', stock: '', min: 5, unit: 'pza' });
@@ -166,7 +173,6 @@
                 doc.setFontSize(10);
                 doc.text(`GENERADO: ${new Date().toLocaleString().toUpperCase()}`, 14, 28);
 
-                // Convertimos todos los strings a MAYÚSCULAS
                 const tableData = inventory.map(i => [
                     String(i.id).toUpperCase(), 
                     String(i.name).toUpperCase(), 
@@ -180,23 +186,22 @@
                     head: [['CÓDIGO', 'ARTÍCULO', 'STOCK', 'UNIDAD', 'ESTADO']],
                     body: tableData,
                     headStyles: { fillColor: [37, 99, 235] },
-                    styles: { textTransform: 'uppercase' } // Forzar mayúsculas en el renderizado
+                    styles: { textTransform: 'uppercase' }
                 });
 
                 doc.save(`INVENTARIO_AIRTEK_${new Date().toISOString().split('T')[0]}.pdf`);
             };
 
-            const exportHistoryPDF = () => {
+            const exportHistoryPDF = (filteredData = history, titleSuffix = "COMPLETA") => {
                 const { jsPDF } = window.jspdf;
                 const doc = new jsPDF();
                 
                 doc.setFontSize(18);
-                doc.text("AIRTEK ENERGÍA - BITÁCORA DE MOVIMIENTOS", 14, 20);
+                doc.text(`AIRTEK ENERGÍA - BITÁCORA ${titleSuffix}`, 14, 20);
                 doc.setFontSize(10);
                 doc.text(`GENERADO: ${new Date().toLocaleString().toUpperCase()}`, 14, 28);
 
-                // Convertimos todos los strings a MAYÚSCULAS
-                const tableData = history.map(h => [
+                const tableData = filteredData.map(h => [
                     String(h.dateStr).toUpperCase(), 
                     String(h.item).toUpperCase(), 
                     h.qty, 
@@ -212,10 +217,10 @@
                     styles: { textTransform: 'uppercase' }
                 });
 
-                doc.save(`BITACORA_AIRTEK_${new Date().toISOString().split('T')[0]}.pdf`);
+                doc.save(`BITACORA_${titleSuffix}_${new Date().toISOString().split('T')[0]}.pdf`);
             };
 
-            const filteredInventory = useMemo(() => {
+            const filteredInventorySearch = useMemo(() => {
                 if (!currentSearch) return [];
                 const search = currentSearch.toLowerCase();
                 return inventory.filter(i => 
@@ -223,6 +228,11 @@
                     i.id.toLowerCase().includes(search)
                 ).slice(0, 5);
             }, [currentSearch, inventory]);
+
+            const historyToShow = useMemo(() => {
+                if (filterItemId === 'all') return history;
+                return history.filter(h => h.itemId === filterItemId);
+            }, [filterItemId, history]);
 
             const addItemToExitList = (item) => {
                 if (selectedItems.find(si => si.id === item.id)) return;
@@ -315,7 +325,7 @@
             if (loading) return (
                 <div className="h-screen flex flex-col items-center justify-center bg-white">
                     <div className="text-blue-600 animate-bounce mb-4"><EnergyLogo className="h-16 w-16" /></div>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Estableciendo conexión segura...</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Conectando...</p>
                 </div>
             );
 
@@ -333,7 +343,7 @@
                                     <div className="flex items-center gap-1.5 mt-0.5">
                                         <span className={`w-1.5 h-1.5 rounded-full ${isCloud ? 'bg-emerald-500 pulse-online' : 'bg-red-500'}`}></span>
                                         <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
-                                            {isCloud ? 'Servidor Activo' : 'Sin Conexión'}
+                                            {isCloud ? 'Online' : 'Offline'}
                                         </p>
                                     </div>
                                 </div>
@@ -388,7 +398,7 @@
                             {activeTab === 'inventory' && (
                                 <div className="space-y-3">
                                     <div className="flex justify-between items-center px-4">
-                                        <h2 className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Existencias Actuales</h2>
+                                        <h2 className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Existencias</h2>
                                         <button onClick={exportInventoryPDF} className="bg-slate-900 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center gap-2">
                                             <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M6 2a2 2 0 00-2 2v12a2 2 0 002 2h8a2 2 0 002-2V7.414A2 2 0 0015.414 6L12 2.586A2 2 0 0010.586 2H6zm5 2l4 4H11V4z"/></svg>
                                             Exportar PDF
@@ -454,11 +464,11 @@
                                                     value={currentSearch}
                                                     onFocus={() => setShowSearchList(true)}
                                                     onChange={e => {setCurrentSearch(e.target.value); setShowSearchList(true);}}
-                                                    placeholder="ESCRIBIR NOMBRE O CÓDIGO..."
+                                                    placeholder="BUSCAR ARTÍCULO..."
                                                 />
-                                                {showSearchList && filteredInventory.length > 0 && (
+                                                {showSearchList && filteredInventorySearch.length > 0 && (
                                                     <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-2xl border border-slate-100 z-50">
-                                                        {filteredInventory.map(i => (
+                                                        {filteredInventorySearch.map(i => (
                                                             <div 
                                                                 key={i.id} 
                                                                 onClick={() => addItemToExitList(i)}
@@ -468,9 +478,7 @@
                                                                     <div className="text-[11px] font-black text-slate-800 uppercase">{i.name}</div>
                                                                     <div className="text-[9px] text-slate-400 font-mono font-black uppercase">{i.id}</div>
                                                                 </div>
-                                                                <div className="text-right">
-                                                                    <div className="text-[10px] font-black text-blue-600 uppercase tracking-tighter">En Stock: {i.stock}</div>
-                                                                </div>
+                                                                <div className="text-right text-[10px] font-black text-blue-600 uppercase">Stock: {i.stock}</div>
                                                             </div>
                                                         ))}
                                                     </div>
@@ -479,29 +487,24 @@
                                         </div>
 
                                         <div className="space-y-4">
-                                            <h4 className="text-[9px] font-black uppercase text-slate-400 ml-4 tracking-widest">Materiales en Lista</h4>
-                                            {selectedItems.length === 0 ? (
-                                                <div className="bg-slate-50 p-6 rounded-[2rem] border-2 border-dashed border-slate-200 text-center">
-                                                    <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest">No hay artículos seleccionados</p>
-                                                </div>
-                                            ) : (
+                                            {selectedItems.length > 0 && (
                                                 <div className="space-y-2">
                                                     {selectedItems.map(item => (
                                                         <div key={item.id} className="bg-slate-50 p-4 rounded-2xl flex items-center justify-between gap-4">
                                                             <div className="flex-1">
                                                                 <div className="text-[11px] font-black text-slate-800 uppercase truncate">{item.name}</div>
-                                                                <div className="text-[8px] font-black text-slate-400 uppercase">Máximo: {item.stock}</div>
+                                                                <div className="text-[8px] font-black text-slate-400 uppercase">DISPONIBLE: {item.stock}</div>
                                                             </div>
                                                             <div className="flex items-center gap-3">
                                                                 <input 
                                                                     type="number" 
-                                                                    className="w-16 p-2 bg-white rounded-xl text-[11px] font-black text-center outline-none focus:ring-2 focus:ring-blue-400"
+                                                                    className="w-16 p-2 bg-white rounded-xl text-[11px] font-black text-center outline-none"
                                                                     value={item.qty}
                                                                     onChange={e => updateSelectedQty(item.id, e.target.value)}
                                                                     min="1"
                                                                     max={item.stock}
                                                                 />
-                                                                <button type="button" onClick={() => removeSelected(item.id)} className="p-2 text-slate-300 hover:text-red-500">
+                                                                <button type="button" onClick={() => removeSelected(item.id)} className="p-2 text-slate-300">
                                                                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12"></path></svg>
                                                                 </button>
                                                             </div>
@@ -512,12 +515,12 @@
                                         </div>
 
                                         <div className="space-y-1">
-                                            <label className="text-[9px] font-black text-slate-400 uppercase ml-4 tracking-widest">Observaciones / Destino</label>
-                                            <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black border-2 border-transparent focus:border-blue-400 outline-none uppercase" value={exitHeader.description} onChange={e=>setExitHeader({...exitHeader, description: e.target.value.toUpperCase()})} placeholder="NODO / TIPO DE TRABAJO" />
+                                            <label className="text-[9px] font-black text-slate-400 uppercase ml-4 tracking-widest">Nodo / Observación</label>
+                                            <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black border-2 border-transparent focus:border-blue-400 outline-none uppercase" value={exitHeader.description} onChange={e=>setExitHeader({...exitHeader, description: e.target.value.toUpperCase()})} placeholder="DETALLES DE SALIDA" />
                                         </div>
 
-                                        <button disabled={selectedItems.length === 0} className="w-full bg-blue-600 disabled:bg-slate-200 text-white p-5 rounded-3xl font-black uppercase text-[11px] shadow-xl tracking-widest transition-all">
-                                            Confirmar Despacho de Material
+                                        <button disabled={selectedItems.length === 0} className="w-full bg-blue-600 disabled:bg-slate-200 text-white p-5 rounded-3xl font-black uppercase text-[11px] shadow-xl tracking-widest">
+                                            Procesar Salida
                                         </button>
                                     </form>
                                 </div>
@@ -526,55 +529,81 @@
                             {activeTab === 'admin' && (
                                 <form onSubmit={handleAddItem} className="bg-white p-8 rounded-[2.5rem] shadow-premium border border-slate-100 space-y-5">
                                     <div className="text-center mb-4">
-                                        <h3 className="text-sm font-black uppercase text-slate-800 tracking-tighter">Gestión Maestro</h3>
+                                        <h3 className="text-sm font-black uppercase text-slate-800 tracking-tighter">Nuevo Material</h3>
                                     </div>
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                         <div className="space-y-1">
-                                            <label className="text-[9px] font-black text-slate-400 uppercase ml-4 tracking-widest">Código Artículo</label>
-                                            <input required placeholder="EJE: ID-001" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black border-2 border-transparent focus:border-blue-400 outline-none uppercase" value={newItem.id} onChange={e=>setNewItem({...newItem, id: e.target.value.toUpperCase()})} />
+                                            <label className="text-[9px] font-black text-slate-400 uppercase ml-4 tracking-widest">Código</label>
+                                            <input required placeholder="ID-ITEM" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black border-2 border-transparent focus:border-blue-400 outline-none uppercase" value={newItem.id} onChange={e=>setNewItem({...newItem, id: e.target.value.toUpperCase()})} />
                                         </div>
                                         <div className="space-y-1">
-                                            <label className="text-[9px] font-black text-slate-400 uppercase ml-4 tracking-widest">Nombre Completo</label>
-                                            <input required placeholder="DESCRIPCIÓN DEL MATERIAL" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black border-2 border-transparent focus:border-blue-400 outline-none uppercase" value={newItem.name} onChange={e=>setNewItem({...newItem, name: e.target.value.toUpperCase()})} />
+                                            <label className="text-[9px] font-black text-slate-400 uppercase ml-4 tracking-widest">Nombre</label>
+                                            <input required placeholder="DESCRIPCIÓN" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black border-2 border-transparent focus:border-blue-400 outline-none uppercase" value={newItem.name} onChange={e=>setNewItem({...newItem, name: e.target.value.toUpperCase()})} />
                                         </div>
                                         <div className="space-y-1">
-                                            <label className="text-[9px] font-black text-slate-400 uppercase ml-4 tracking-widest">Stock Inicial</label>
+                                            <label className="text-[9px] font-black text-slate-400 uppercase ml-4 tracking-widest">Stock</label>
                                             <input required type="number" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black border-2 border-transparent focus:border-blue-400 outline-none" value={newItem.stock} onChange={e=>setNewItem({...newItem, stock: e.target.value})} />
                                         </div>
                                         <div className="space-y-1">
-                                            <label className="text-[9px] font-black text-slate-400 uppercase ml-4 tracking-widest">Unidad de Medida</label>
-                                            <input required placeholder="PZA, MTS, ROLLOS" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black border-2 border-transparent focus:border-blue-400 outline-none uppercase text-center" value={newItem.unit} onChange={e=>setNewItem({...newItem, unit: e.target.value.toUpperCase()})} />
+                                            <label className="text-[9px] font-black text-slate-400 uppercase ml-4 tracking-widest">Unidad</label>
+                                            <input required placeholder="PZA, MTS" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black border-2 border-transparent focus:border-blue-400 outline-none uppercase text-center" value={newItem.unit} onChange={e=>setNewItem({...newItem, unit: e.target.value.toUpperCase()})} />
                                         </div>
                                     </div>
-                                    <button className="w-full bg-slate-900 text-white p-5 rounded-3xl font-black uppercase text-[11px] tracking-widest">Registrar Nuevo Material</button>
+                                    <button className="w-full bg-slate-900 text-white p-5 rounded-3xl font-black uppercase text-[11px] tracking-widest">Guardar</button>
                                 </form>
                             )}
 
                             {activeTab === 'history' && (
-                                <div className="space-y-3">
-                                    <div className="flex justify-between items-center px-4">
-                                        <h2 className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Bitácora de Salidas</h2>
-                                        <button onClick={exportHistoryPDF} className="bg-slate-900 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center gap-2">
-                                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M6 2a2 2 0 00-2 2v12a2 2 0 002 2h8a2 2 0 002-2V7.414A2 2 0 0015.414 6L12 2.586A2 2 0 0010.586 2H6zm5 2l4 4H11V4z"/></svg>
-                                            Exportar PDF
-                                        </button>
-                                    </div>
-                                    {history.map(h => (
-                                        <div key={h.id} className="bg-white p-5 rounded-[2.2rem] flex flex-col sm:flex-row justify-between items-center shadow-sm border border-l-4 border-l-blue-500 gap-3">
-                                            <div className="flex flex-col text-center sm:text-left">
-                                                <div className="font-black text-[12px] uppercase text-slate-800">{h.item}</div>
-                                                <div className="text-[9px] font-black text-slate-500 mt-1 uppercase">
-                                                    PARA: <span className="text-slate-800 font-black">{h.tech}</span>
-                                                    <span className="mx-2 text-slate-200">|</span>
-                                                    POR: <span className="text-blue-600 font-black">{h.monitor || '---'}</span>
-                                                </div>
+                                <div className="space-y-4">
+                                    <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100 space-y-4">
+                                        <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+                                            <div className="w-full sm:w-1/2 space-y-1">
+                                                <label className="text-[9px] font-black text-blue-600 uppercase ml-2 tracking-widest">Filtro por Material</label>
+                                                <select 
+                                                    className="w-full p-3 bg-slate-50 rounded-xl text-[10px] font-black border-none outline-none appearance-none"
+                                                    value={filterItemId}
+                                                    onChange={e => setFilterItemId(e.target.value)}
+                                                >
+                                                    <option value="all">TODOS LOS MOVIMIENTOS</option>
+                                                    {inventory.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+                                                </select>
                                             </div>
-                                            <div className="text-center sm:text-right shrink-0">
-                                                <div className="text-red-600 font-black text-sm italic tracking-tighter">-{h.qty}</div>
-                                                <div className="text-[8px] text-slate-400 font-black uppercase mt-1.5">{h.dateStr}</div>
+                                            <div className="flex gap-2">
+                                                <button 
+                                                    onClick={() => exportHistoryPDF(historyToShow, filterItemId === 'all' ? 'COMPLETA' : `DE ${filterItemId}`)} 
+                                                    className="bg-slate-900 text-white px-4 py-3 rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center gap-2"
+                                                >
+                                                    <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path d="M6 2a2 2 0 00-2 2v12a2 2 0 002 2h8a2 2 0 002-2V7.414A2 2 0 0015.414 6L12 2.586A2 2 0 0010.586 2H6zm5 2l4 4H11V4z"/></svg>
+                                                    Exportar Selección
+                                                </button>
                                             </div>
                                         </div>
-                                    ))}
+                                    </div>
+
+                                    <div className="space-y-2.5">
+                                        {historyToShow.length === 0 ? (
+                                            <div className="text-center p-12 bg-white rounded-[2rem] border-2 border-dashed border-slate-100">
+                                                <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Sin registros encontrados</p>
+                                            </div>
+                                        ) : (
+                                            historyToShow.map(h => (
+                                                <div key={h.id} className="bg-white p-5 rounded-[2.2rem] flex flex-col sm:flex-row justify-between items-center shadow-sm border border-l-4 border-l-blue-500 gap-3">
+                                                    <div className="flex flex-col text-center sm:text-left">
+                                                        <div className="font-black text-[12px] uppercase text-slate-800 tracking-tighter">{h.item}</div>
+                                                        <div className="text-[9px] font-black text-slate-500 mt-1 uppercase">
+                                                            PARA: <span className="text-slate-900">{h.tech}</span>
+                                                            <span className="mx-2 text-slate-200">|</span>
+                                                            POR: <span className="text-blue-600">{h.monitor || '---'}</span>
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-center sm:text-right shrink-0 bg-slate-50 px-4 py-2 rounded-2xl">
+                                                        <div className="text-red-600 font-black text-sm italic tracking-tighter">-{h.qty}</div>
+                                                        <div className="text-[8px] text-slate-400 font-black uppercase mt-0.5">{h.dateStr}</div>
+                                                    </div>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
                                 </div>
                             )}
                         </main>
