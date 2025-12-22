@@ -38,7 +38,6 @@
             display: none;
         }
 
-        /* Estilos para impresión del Reporte */
         @media print {
             .no-print { display: none !important; }
             body { background: white; }
@@ -91,6 +90,9 @@
             const [activeTab, setActiveTab] = useState('inventory');
             const [newExit, setNewExit] = useState({ tech: '', monitor: '', itemId: '', qty: '', description: '' });
             const [newItem, setNewItem] = useState({ id: '', name: '', stock: '', min: 5, unit: 'pza' });
+            
+            // Estado para edición
+            const [editingItem, setEditingItem] = useState(null);
 
             const dbRef = useRef(null);
             const authRef = useRef(null);
@@ -152,78 +154,26 @@
                 return () => { unsubInv(); unsubHist(); };
             }, [isCloud, user, appId]);
 
-            const exportToPDF = () => {
-                const printWindow = window.open('', '_blank');
-                const date = new Date().toLocaleString();
-                
-                const content = `
-                    <html>
-                    <head>
-                        <title>Reporte de Inventario Airtek Energía</title>
-                        <style>
-                            body { font-family: 'Inter', sans-serif; color: #1e293b; padding: 40px; }
-                            .header { display: flex; align-items: center; border-bottom: 2px solid #3b82f6; padding-bottom: 20px; margin-bottom: 30px; }
-                            .logo { background: #2563eb; color: white; padding: 10px; border-radius: 8px; margin-right: 15px; }
-                            table { width: 100%; border-collapse: collapse; }
-                            th { background: #f8fafc; text-align: left; padding: 12px; font-size: 10px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0; }
-                            td { padding: 12px; font-size: 12px; border-bottom: 1px solid #f1f5f9; }
-                            .low-stock { color: #ef4444; font-weight: bold; }
-                            .footer { margin-top: 50px; font-size: 10px; color: #94a3b8; text-align: center; border-top: 1px solid #f1f5f9; padding-top: 20px; }
-                        </style>
-                    </head>
-                    <body>
-                        <div class="header">
-                            <div class="logo">⚡</div>
-                            <div>
-                                <h1 style="margin:0; font-size: 18px;">AIRTEK ENERGÍA</h1>
-                                <p style="margin:0; font-size: 10px; color: #64748b;">REPORTE DE ESTADO DE INVENTARIO</p>
-                            </div>
-                            <div style="margin-left: auto; text-align: right; font-size: 10px;">
-                                <strong>Generado:</strong><br>${date}
-                            </div>
-                        </div>
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>CÓDIGO SKU</th>
-                                    <th>DESCRIPCIÓN DEL ARTÍCULO</th>
-                                    <th>STOCK ACTUAL</th>
-                                    <th>MÍNIMO</th>
-                                    <th>ESTADO</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${inventory.map(i => `
-                                    <tr>
-                                        <td style="font-family: monospace;">${i.id}</td>
-                                        <td style="font-weight: bold;">${i.name.toUpperCase()}</td>
-                                        <td class="${i.stock <= i.min ? 'low-stock' : ''}">${i.stock} ${i.unit}</td>
-                                        <td>${i.min}</td>
-                                        <td>${i.stock <= i.min ? '🔴 REABASTECER' : '🟢 ÓPTIMO'}</td>
-                                    </tr>
-                                `).join('')}
-                            </tbody>
-                        </table>
-                        <div class="footer">
-                            Este documento es un reporte oficial generado desde el Sistema de Gestión de Consumibles de Airtek Energía.
-                        </div>
-                    </body>
-                    </html>
-                `;
-                
-                printWindow.document.write(content);
-                printWindow.document.close();
-                setTimeout(() => {
-                    printWindow.print();
-                }, 500);
-            };
-
             const updateStock = async (docId, currentStock, mod) => {
                 const { doc, updateDoc } = window.FirebaseSDK;
                 try {
                     await updateDoc(doc(dbRef.current, 'artifacts', appId, 'public', 'data', 'inventory', docId), {
                         stock: Math.max(0, currentStock + mod)
                     });
+                } catch (err) { console.error(err); }
+            };
+
+            const handleSaveEdit = async (e) => {
+                e.preventDefault();
+                const { doc, updateDoc } = window.FirebaseSDK;
+                try {
+                    await updateDoc(doc(dbRef.current, 'artifacts', appId, 'public', 'data', 'inventory', editingItem.docId), {
+                        name: editingItem.name,
+                        id: editingItem.id,
+                        min: Number(editingItem.min),
+                        unit: editingItem.unit
+                    });
+                    setEditingItem(null);
                 } catch (err) { console.error(err); }
             };
 
@@ -269,12 +219,21 @@
                 } catch (err) { console.error(err); }
             };
 
+            const exportToPDF = () => {
+                const printWindow = window.open('', '_blank');
+                const date = new Date().toLocaleString();
+                const content = `<html><head><title>Reporte Airtek Energía</title><style>body{font-family:sans-serif;padding:40px}table{width:100%;border-collapse:collapse}th,td{padding:12px;border:1px solid #ddd;text-align:left}</style></head><body><h1>Reporte Inventario - ${date}</h1><table><thead><tr><th>ID</th><th>NOMBRE</th><th>STOCK</th><th>UNIDAD</th></tr></thead><tbody>${inventory.map(i => `<tr><td>${i.id}</td><td>${i.name}</td><td>${i.stock}</td><td>${i.unit}</td></tr>`).join('')}</tbody></table></body></html>`;
+                printWindow.document.write(content);
+                printWindow.document.close();
+                printWindow.print();
+            };
+
             if (loading) return (
                 <div className="h-screen flex flex-col items-center justify-center bg-white">
                     <div className="text-blue-600 animate-bounce mb-4">
                         <EnergyLogo className="h-16 w-16" />
                     </div>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Iniciando Airtek Energía...</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Cargando Sistema...</p>
                 </div>
             );
 
@@ -283,7 +242,7 @@
                     <header className="bg-white border-b border-slate-100 sticky top-0 z-50 px-6 py-4">
                         <div className="max-w-3xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
                             <div className="flex items-center gap-4">
-                                <div className="bg-blue-600 text-white p-2 rounded-xl shadow-lg shadow-blue-200">
+                                <div className="bg-blue-600 text-white p-2 rounded-xl shadow-lg">
                                     <EnergyLogo className="h-7 w-7" />
                                 </div>
                                 <div>
@@ -293,10 +252,6 @@
                                     </div>
                                     <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest leading-none mt-0.5">Gestión de Consumibles</p>
                                 </div>
-                            </div>
-                            <div className="flex items-center gap-2 self-start md:self-auto bg-slate-50 px-3 py-1.5 rounded-full border border-slate-100">
-                                <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
-                                <span className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider">Servidor Activo</span>
                             </div>
                         </div>
                     </header>
@@ -311,8 +266,8 @@
                             ].map(t => (
                                 <button 
                                     key={t.id} 
-                                    onClick={() => setActiveTab(t.id)} 
-                                    className={`flex-1 min-w-[90px] py-3 rounded-2xl font-bold text-[10px] uppercase tracking-wider transition-all ${activeTab === t.id ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
+                                    onClick={() => {setActiveTab(t.id); setEditingItem(null);}} 
+                                    className={`flex-1 min-w-[90px] py-3 rounded-2xl font-bold text-[10px] uppercase tracking-wider transition-all ${activeTab === t.id ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-blue-500 hover:bg-blue-50'}`}
                                 >
                                     {t.label}
                                 </button>
@@ -320,32 +275,65 @@
                         </nav>
 
                         <main className="tab-content">
+                            {/* MODAL / FORMULARIO DE EDICIÓN */}
+                            {editingItem && (
+                                <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+                                    <form onSubmit={handleSaveEdit} className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl p-8 space-y-4">
+                                        <div className="text-center mb-6">
+                                            <h3 className="text-sm font-black uppercase text-slate-800 tracking-tight">Editar Artículo</h3>
+                                            <p className="text-[9px] font-bold text-blue-500 uppercase tracking-widest">Actualizando {editingItem.name}</p>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-[9px] font-black text-slate-400 uppercase ml-4">Nombre</label>
+                                            <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold border-2 border-transparent focus:border-blue-400 outline-none uppercase" value={editingItem.name} onChange={e=>setEditingItem({...editingItem, name: e.target.value})} />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-[9px] font-black text-slate-400 uppercase ml-4">SKU / Código</label>
+                                            <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold border-2 border-transparent focus:border-blue-400 outline-none uppercase" value={editingItem.id} onChange={e=>setEditingItem({...editingItem, id: e.target.value.toUpperCase()})} />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div className="space-y-1">
+                                                <label className="text-[9px] font-black text-slate-400 uppercase ml-4">Min. Stock</label>
+                                                <input required type="number" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold border-2 border-transparent focus:border-blue-400 outline-none" value={editingItem.min} onChange={e=>setEditingItem({...editingItem, min: e.target.value})} />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-[9px] font-black text-slate-400 uppercase ml-4">Unidad</label>
+                                                <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold border-2 border-transparent focus:border-blue-400 outline-none uppercase" value={editingItem.unit} onChange={e=>setEditingItem({...editingItem, unit: e.target.value})} />
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-3 pt-4">
+                                            <button type="button" onClick={()=>setEditingItem(null)} className="flex-1 py-4 rounded-2xl font-black uppercase text-[10px] text-slate-400 hover:bg-slate-50 transition-all">Cancelar</button>
+                                            <button type="submit" className="flex-2 bg-blue-600 text-white px-8 py-4 rounded-2xl font-black uppercase text-[10px] shadow-lg shadow-blue-200">Guardar Cambios</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            )}
+
                             {activeTab === 'inventory' && (
                                 <div className="space-y-3">
                                     <div className="flex justify-between items-center px-4">
-                                        <h2 className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Existencias en Almacén</h2>
-                                        <button 
-                                            onClick={exportToPDF}
-                                            className="text-[9px] font-black uppercase text-blue-600 bg-white border border-blue-200 px-4 py-2 rounded-full hover:bg-blue-50 transition-all flex items-center gap-2 shadow-sm"
-                                        >
-                                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
-                                            Generar Reporte PDF
-                                        </button>
+                                        <h2 className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Inventario en Tiempo Real</h2>
+                                        <button onClick={exportToPDF} className="text-[9px] font-black uppercase text-blue-600 bg-white border border-blue-100 px-4 py-2 rounded-full hover:bg-blue-50 transition-all">Reporte PDF</button>
                                     </div>
                                     <div className="grid grid-cols-1 gap-3">
                                         {inventory.map(i => (
-                                            <div key={i.docId} className="bg-white p-5 rounded-[2rem] flex flex-col sm:flex-row justify-between items-center shadow-sm border border-slate-100 hover:border-blue-200 transition-all gap-4">
-                                                <div className="flex flex-col text-center sm:text-left">
-                                                    <span className="font-extrabold text-[13px] uppercase tracking-tight text-slate-800">{i.name}</span>
-                                                    <div className="flex items-center justify-center sm:justify-start gap-2 mt-1">
-                                                        <span className="text-[9px] text-slate-400 font-mono font-bold tracking-widest">{i.id}</span>
-                                                        {i.stock <= i.min && <span className="text-[8px] font-black text-white bg-red-500 px-2 py-0.5 rounded-full uppercase animate-pulse">Reabastecer</span>}
+                                            <div key={i.docId} className="bg-white p-5 rounded-[2rem] flex flex-col sm:flex-row justify-between items-center shadow-sm border border-slate-100 hover:border-blue-200 transition-all gap-4 group">
+                                                <div className="flex items-center gap-4 w-full sm:w-auto">
+                                                    <button onClick={() => setEditingItem(i)} className="p-3 bg-slate-50 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all">
+                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                                                    </button>
+                                                    <div className="flex flex-col text-left">
+                                                        <span className="font-extrabold text-[13px] uppercase tracking-tight text-slate-800">{i.name}</span>
+                                                        <div className="flex items-center gap-2 mt-1">
+                                                            <span className="text-[9px] text-slate-400 font-mono font-bold tracking-widest">{i.id}</span>
+                                                            {i.stock <= i.min && <span className="text-[8px] font-black text-white bg-red-500 px-2 py-0.5 rounded-full uppercase animate-pulse">Bajo Stock</span>}
+                                                        </div>
                                                     </div>
                                                 </div>
                                                 <div className="flex items-center gap-4 bg-slate-50 p-1.5 rounded-2xl border border-slate-100">
                                                     <button onClick={() => updateStock(i.docId, i.stock, -1)} className="w-9 h-9 flex items-center justify-center bg-white rounded-xl shadow-sm font-bold text-slate-400 hover:text-red-500 transition-colors">-</button>
                                                     <div className="px-4 text-center min-w-[60px]">
-                                                        <div className={`font-black text-base leading-none ${i.stock <= i.min ? 'text-red-500' : 'text-slate-900'}`}>{i.stock}</div>
+                                                        <div className={`font-black text-lg leading-none ${i.stock <= i.min ? 'text-red-500' : 'text-slate-900'}`}>{i.stock}</div>
                                                         <div className="text-[8px] text-slate-300 font-extrabold uppercase mt-1">{i.unit}</div>
                                                     </div>
                                                     <button onClick={() => updateStock(i.docId, i.stock, 1)} className="w-9 h-9 flex items-center justify-center bg-white rounded-xl shadow-sm font-bold text-slate-400 hover:text-emerald-500 transition-colors">+</button>
@@ -353,7 +341,6 @@
                                             </div>
                                         ))}
                                     </div>
-                                    {inventory.length === 0 && <div className="text-center py-20 text-slate-300 font-bold text-xs uppercase tracking-widest italic">Sincronizando con la nube...</div>}
                                 </div>
                             )}
 
@@ -361,15 +348,15 @@
                                 <form onSubmit={handleExit} className="bg-white p-8 rounded-[2.5rem] shadow-premium border border-slate-100 space-y-5">
                                     <div className="text-center space-y-1 mb-4">
                                         <h3 className="text-sm font-black uppercase text-slate-800 tracking-tight">Registro de Retiro</h3>
-                                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.2em]">Formulario de Salida de Material</p>
+                                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Salida de Material</p>
                                     </div>
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                         <div className="space-y-1">
                                             <label className="text-[9px] font-black text-slate-400 uppercase ml-4">Técnico Receptor</label>
-                                            <input required placeholder="NOMBRE DEL TÉCNICO" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold border-2 border-transparent focus:border-blue-400 outline-none uppercase transition-all" value={newExit.tech} onChange={e=>setNewExit({...newExit, tech: e.target.value})} />
+                                            <input required placeholder="NOMBRE TÉCNICO" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold border-2 border-transparent focus:border-blue-400 outline-none uppercase transition-all" value={newExit.tech} onChange={e=>setNewExit({...newExit, tech: e.target.value})} />
                                         </div>
                                         <div className="space-y-1">
-                                            <label className="text-[9px] font-black text-blue-600 uppercase ml-4 font-bold">Responsable de Monitoreo</label>
+                                            <label className="text-[9px] font-black text-blue-600 uppercase ml-4">Resp. Monitoreo</label>
                                             <input required placeholder="QUIEN ENTREGA" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold border-2 border-transparent focus:border-blue-400 outline-none uppercase transition-all" value={newExit.monitor} onChange={e=>setNewExit({...newExit, monitor: e.target.value})} />
                                         </div>
                                     </div>
@@ -387,10 +374,10 @@
                                         </div>
                                         <div className="flex-[2] space-y-1">
                                             <label className="text-[9px] font-black text-slate-400 uppercase ml-4">Motivo / Ubicación</label>
-                                            <input required placeholder="EJ: NODO CENTRO MANT." className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold border-2 border-transparent focus:border-blue-400 outline-none uppercase" value={newExit.description} onChange={e=>setNewExit({...newExit, description: e.target.value})} />
+                                            <input required placeholder="EJ: NODO CENTRO" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold border-2 border-transparent focus:border-blue-400 outline-none uppercase" value={newExit.description} onChange={e=>setNewExit({...newExit, description: e.target.value})} />
                                         </div>
                                     </div>
-                                    <button className="w-full bg-blue-600 text-white p-5 rounded-2xl font-black uppercase text-[11px] tracking-[0.2em] shadow-xl hover:shadow-blue-200 active:scale-95 transition-all mt-4">Validar Retiro</button>
+                                    <button className="w-full bg-blue-600 text-white p-5 rounded-2xl font-black uppercase text-[11px] tracking-[0.2em] shadow-xl hover:shadow-blue-200 active:scale-95 transition-all mt-4">Confirmar Retiro</button>
                                 </form>
                             )}
 
@@ -398,16 +385,16 @@
                                 <form onSubmit={handleAddItem} className="bg-white p-8 rounded-[2.5rem] shadow-premium border border-slate-100 space-y-5">
                                     <div className="text-center space-y-1 mb-4">
                                         <h3 className="text-sm font-black uppercase text-slate-800 tracking-tight">Alta de Nuevos Insumos</h3>
-                                        <p className="text-[9px] font-bold text-blue-500 uppercase tracking-[0.2em]">Registro Maestro de Materiales</p>
+                                        <p className="text-[9px] font-bold text-blue-500 uppercase tracking-widest">Maestro de Materiales</p>
                                     </div>
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                         <div className="space-y-1">
-                                            <label className="text-[9px] font-black text-slate-400 uppercase ml-4">Código / SKU</label>
-                                            <input required placeholder="ID-001" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold border-2 border-transparent focus:border-blue-400 outline-none uppercase" value={newItem.id} onChange={e=>setNewItem({...newItem, id: e.target.value.toUpperCase()})} />
+                                            <label className="text-[9px] font-black text-slate-400 uppercase ml-4">SKU / Código</label>
+                                            <input required placeholder="ID-XXX" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold border-2 border-transparent focus:border-blue-400 outline-none uppercase" value={newItem.id} onChange={e=>setNewItem({...newItem, id: e.target.value.toUpperCase()})} />
                                         </div>
                                         <div className="space-y-1">
-                                            <label className="text-[9px] font-black text-slate-400 uppercase ml-4">Nombre del Artículo</label>
-                                            <input required placeholder="EJ: FUSIBLE 10A" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold border-2 border-transparent focus:border-blue-400 outline-none uppercase" value={newItem.name} onChange={e=>setNewItem({...newItem, name: e.target.value})} />
+                                            <label className="text-[9px] font-black text-slate-400 uppercase ml-4">Nombre Artículo</label>
+                                            <input required placeholder="EJ: BATERÍA 12V" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold border-2 border-transparent focus:border-blue-400 outline-none uppercase" value={newItem.name} onChange={e=>setNewItem({...newItem, name: e.target.value})} />
                                         </div>
                                         <div className="space-y-1">
                                             <label className="text-[9px] font-black text-slate-400 uppercase ml-4">Stock Inicial</label>
@@ -415,23 +402,23 @@
                                         </div>
                                         <div className="space-y-1">
                                             <label className="text-[9px] font-black text-slate-400 uppercase ml-4">Unidad</label>
-                                            <input required placeholder="PZA / MTS / LATA" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold border-2 border-transparent focus:border-blue-400 outline-none uppercase text-center" value={newItem.unit} onChange={e=>setNewItem({...newItem, unit: e.target.value})} />
+                                            <input required placeholder="PZA / MTS" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold border-2 border-transparent focus:border-blue-400 outline-none uppercase text-center" value={newItem.unit} onChange={e=>setNewItem({...newItem, unit: e.target.value})} />
                                         </div>
                                     </div>
-                                    <button className="w-full bg-slate-900 text-white p-5 rounded-2xl font-black uppercase text-[11px] tracking-[0.2em] shadow-lg hover:bg-slate-800 active:scale-95 transition-all">Registrar en Maestro</button>
+                                    <button className="w-full bg-slate-900 text-white p-5 rounded-2xl font-black uppercase text-[11px] tracking-[0.2em] shadow-lg hover:bg-slate-800 transition-all">Registrar Artículo</button>
                                 </form>
                             )}
 
                             {activeTab === 'history' && (
                                 <div className="space-y-3">
-                                    <h2 className="text-[10px] font-black uppercase text-slate-400 tracking-widest px-4 text-center sm:text-left">Bitácora de Salidas</h2>
+                                    <h2 className="text-[10px] font-black uppercase text-slate-400 tracking-widest px-4">Historial de Movimientos</h2>
                                     {history.map(h => (
                                         <div key={h.id} className="bg-white p-5 rounded-[2.2rem] flex flex-col sm:flex-row justify-between items-center shadow-sm border border-slate-100 border-l-4 border-l-blue-500 gap-3 hover:bg-slate-50 transition-colors">
                                             <div className="flex flex-col text-center sm:text-left">
                                                 <div className="font-extrabold text-[12px] uppercase text-slate-800 leading-tight">{h.item}</div>
-                                                <div className="text-[9px] font-bold text-slate-500 mt-1 uppercase tracking-wide">
+                                                <div className="text-[9px] font-bold text-slate-500 mt-1 uppercase">
                                                     Recibe: <span className="text-slate-800 font-black">{h.tech}</span>
-                                                    <span className="mx-2 text-slate-300">|</span>
+                                                    <span className="mx-2 text-slate-200">|</span>
                                                     Entrega: <span className="text-blue-600 font-black">{h.monitor || 'N/A'}</span>
                                                 </div>
                                                 <div className="text-[8px] font-medium text-slate-400 mt-0.5 uppercase italic">{h.description}</div>
@@ -442,21 +429,10 @@
                                             </div>
                                         </div>
                                     ))}
-                                    {history.length === 0 && <div className="py-20 text-center text-slate-300 font-bold italic text-xs uppercase tracking-widest">Sin movimientos recientes</div>}
                                 </div>
                             )}
                         </main>
                     </div>
-                    
-                    <footer className="mt-12 py-12 text-center border-t border-slate-100 px-6 bg-white/50">
-                        <div className="text-slate-300 flex justify-center mb-4">
-                            <EnergyLogo className="h-6 w-6" />
-                        </div>
-                        <div className="max-w-md mx-auto space-y-1">
-                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.25em]">Coordinación Operativa de Energía</p>
-                            <p className="text-[8px] font-bold text-slate-300 uppercase tracking-widest italic tracking-tighter">Sistema de Gestión • Airtek 2025</p>
-                        </div>
-                    </footer>
                 </div>
             );
         };
