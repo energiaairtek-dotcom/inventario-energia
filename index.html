@@ -89,7 +89,7 @@
             const [inventory, setInventory] = useState([]);
             const [history, setHistory] = useState([]);
             const [activeTab, setActiveTab] = useState('inventory');
-            const [newExit, setNewExit] = useState({ tech: '', itemId: '', qty: '', description: '' });
+            const [newExit, setNewExit] = useState({ tech: '', monitor: '', itemId: '', qty: '', description: '' });
             const [newItem, setNewItem] = useState({ id: '', name: '', stock: '', min: 5, unit: 'pza' });
 
             const dbRef = useRef(null);
@@ -240,6 +240,7 @@
 
                     await addDoc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'history'), {
                         tech: newExit.tech,
+                        monitor: newExit.monitor,
                         item: item.name,
                         itemId: item.id,
                         qty: Number(newExit.qty),
@@ -248,7 +249,7 @@
                         timestamp: serverTimestamp()
                     });
 
-                    setNewExit({ tech: '', itemId: '', qty: '', description: '' });
+                    setNewExit({ tech: '', monitor: '', itemId: '', qty: '', description: '' });
                     setActiveTab('history');
                 } catch (err) { console.error(err); }
             };
@@ -311,7 +312,7 @@
                                 <button 
                                     key={t.id} 
                                     onClick={() => setActiveTab(t.id)} 
-                                    className={`flex-1 min-w-[90px] py-3 rounded-2xl font-bold text-[10px] uppercase tracking-wider transition-all ${activeTab === t.id ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}
+                                    className={`flex-1 min-w-[90px] py-3 rounded-2xl font-bold text-[10px] uppercase tracking-wider transition-all ${activeTab === t.id ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
                                 >
                                     {t.label}
                                 </button>
@@ -362,9 +363,15 @@
                                         <h3 className="text-sm font-black uppercase text-slate-800 tracking-tight">Registro de Retiro</h3>
                                         <p className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.2em]">Formulario de Salida de Material</p>
                                     </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[9px] font-black text-slate-400 uppercase ml-4">Nombre del Técnico Receptor</label>
-                                        <input required placeholder="NOMBRE COMPLETO" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold border-2 border-transparent focus:border-blue-400 outline-none uppercase transition-all" value={newExit.tech} onChange={e=>setNewExit({...newExit, tech: e.target.value})} />
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div className="space-y-1">
+                                            <label className="text-[9px] font-black text-slate-400 uppercase ml-4">Técnico Receptor</label>
+                                            <input required placeholder="NOMBRE DEL TÉCNICO" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold border-2 border-transparent focus:border-blue-400 outline-none uppercase transition-all" value={newExit.tech} onChange={e=>setNewExit({...newExit, tech: e.target.value})} />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-[9px] font-black text-blue-600 uppercase ml-4 font-bold">Responsable de Monitoreo</label>
+                                            <input required placeholder="QUIEN ENTREGA" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold border-2 border-transparent focus:border-blue-400 outline-none uppercase transition-all" value={newExit.monitor} onChange={e=>setNewExit({...newExit, monitor: e.target.value})} />
+                                        </div>
                                     </div>
                                     <div className="space-y-1">
                                         <label className="text-[9px] font-black text-slate-400 uppercase ml-4">Material / Consumible</label>
@@ -422,8 +429,10 @@
                                         <div key={h.id} className="bg-white p-5 rounded-[2.2rem] flex flex-col sm:flex-row justify-between items-center shadow-sm border border-slate-100 border-l-4 border-l-blue-500 gap-3 hover:bg-slate-50 transition-colors">
                                             <div className="flex flex-col text-center sm:text-left">
                                                 <div className="font-extrabold text-[12px] uppercase text-slate-800 leading-tight">{h.item}</div>
-                                                <div className="text-[9px] font-bold text-slate-400 mt-1 uppercase tracking-wide">
-                                                    Técnico: <span className="text-blue-600 font-black">{h.tech}</span>
+                                                <div className="text-[9px] font-bold text-slate-500 mt-1 uppercase tracking-wide">
+                                                    Recibe: <span className="text-slate-800 font-black">{h.tech}</span>
+                                                    <span className="mx-2 text-slate-300">|</span>
+                                                    Entrega: <span className="text-blue-600 font-black">{h.monitor || 'N/A'}</span>
                                                 </div>
                                                 <div className="text-[8px] font-medium text-slate-400 mt-0.5 uppercase italic">{h.description}</div>
                                             </div>
