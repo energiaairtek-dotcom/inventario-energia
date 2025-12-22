@@ -48,18 +48,16 @@
             getFirestore, doc, setDoc, updateDoc, deleteDoc, collection, 
             query, onSnapshot, addDoc, serverTimestamp
         };
+        
+        // Disparar evento para avisar a React que Firebase está listo
+        window.dispatchEvent(new Event('firebase-ready'));
     </script>
 
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useRef } = React;
 
         const App = () => {
-            const { 
-                initializeApp, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken,
-                getFirestore, doc, updateDoc, deleteDoc, collection, 
-                query, onSnapshot, addDoc, serverTimestamp 
-            } = window.FirebaseSDK;
-
+            const [sdkReady, setSdkReady] = useState(!!window.FirebaseSDK);
             const [user, setUser] = useState(null);
             const [loading, setLoading] = useState(true);
             const [activeTab, setActiveTab] = useState('dashboard');
@@ -70,67 +68,85 @@
             const [newExit, setNewExit] = useState({ tech: '', itemId: '', qty: '' });
             const [newItem, setNewItem] = useState({ id: '', name: '', stock: '', min: '', unit: 'pza' });
 
-            // Inicialización de Firebase
-            const firebaseConfig = JSON.parse(__firebase_config);
-            const app = initializeApp(firebaseConfig);
-            const auth = getAuth(app);
-            const db = getFirestore(app);
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'inventario-energia-v1';
+            // Referencias para Firebase para evitar múltiples inicializaciones
+            const dbRef = useRef(null);
+            const authRef = useRef(null);
+            const appIdRef = useRef('inventario-energia-v1');
 
-            // Manejo de Autenticación (REGLA 3)
             useEffect(() => {
-                const initAuth = async () => {
-                    try {
-                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                            await signInWithCustomToken(auth, __initial_auth_token);
-                        } else {
-                            await signInAnonymously(auth);
-                        }
-                    } catch (err) {
-                        console.error("Error de autenticación:", err);
-                    }
-                };
-                
-                initAuth();
-                const unsubscribe = onAuthStateChanged(auth, (u) => {
-                    if (u) {
-                        setUser(u);
-                        setLoading(false);
-                    }
-                });
-                return () => unsubscribe();
+                const handleReady = () => setSdkReady(true);
+                window.addEventListener('firebase-ready', handleReady);
+                return () => window.removeEventListener('firebase-ready', handleReady);
             }, []);
 
-            // Escucha de datos en tiempo real (REGLA 1 y 2)
+            // Inicialización de Firebase una vez que el SDK esté disponible
             useEffect(() => {
-                // Guardia de seguridad: No ejecutar si no hay usuario (REGLA 3)
-                if (!user) return;
+                if (!sdkReady || !window.FirebaseSDK) return;
 
-                // Definición de rutas según REGLA 1
+                const { initializeApp, getAuth, getFirestore, signInWithCustomToken, signInAnonymously, onAuthStateChanged } = window.FirebaseSDK;
+
+                try {
+                    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+                    if (!firebaseConfig) {
+                        console.error("Firebase config no encontrada");
+                        setLoading(false);
+                        return;
+                    }
+
+                    const app = initializeApp(firebaseConfig);
+                    authRef.current = getAuth(app);
+                    dbRef.current = getFirestore(app);
+                    appIdRef.current = typeof __app_id !== 'undefined' ? __app_id : 'inventario-energia-v1';
+
+                    const initAuth = async () => {
+                        try {
+                            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                                await signInWithCustomToken(authRef.current, __initial_auth_token);
+                            } else {
+                                await signInAnonymously(authRef.current);
+                            }
+                        } catch (err) {
+                            console.error("Error de autenticación:", err);
+                        }
+                    };
+                    
+                    initAuth();
+                    const unsubscribe = onAuthStateChanged(authRef.current, (u) => {
+                        setUser(u);
+                        setLoading(false);
+                    });
+                    return () => unsubscribe();
+                } catch (e) {
+                    console.error("Error inicializando Firebase:", e);
+                    setLoading(false);
+                }
+            }, [sdkReady]);
+
+            // Escucha de datos en tiempo real
+            useEffect(() => {
+                if (!user || !dbRef.current) return;
+
+                const { collection, onSnapshot } = window.FirebaseSDK;
+                const db = dbRef.current;
+                const appId = appIdRef.current;
+
                 const invCol = collection(db, 'artifacts', appId, 'public', 'data', 'inventory');
                 const histCol = collection(db, 'artifacts', appId, 'public', 'data', 'history');
 
-                // Suscripción al Inventario
                 const unsubInv = onSnapshot(invCol, (snapshot) => {
                     const items = snapshot.docs.map(doc => ({ ...doc.data(), docId: doc.id }));
                     setInventory(items);
-                }, (error) => {
-                    console.error("Error en inventario:", error);
-                });
+                }, (error) => console.error("Error inv:", error));
 
-                // Suscripción al Historial
                 const unsubHist = onSnapshot(histCol, (snapshot) => {
                     const logs = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-                    // Ordenar en memoria (REGLA 2: No usar orderBy en la query)
                     const sortedLogs = logs.sort((a, b) => {
                         const timeA = a.timestamp?.seconds || 0;
                         const timeB = b.timestamp?.seconds || 0;
                         return timeB - timeA;
                     });
                     setHistory(sortedLogs);
-                }, (error) => {
-                    console.error("Error en historial:", error);
-                });
+                }, (error) => console.error("Error hist:", error));
 
                 return () => {
                     unsubInv();
@@ -140,19 +156,21 @@
 
             const handleExitSubmit = async (e) => {
                 e.preventDefault();
-                if (!user) return;
+                if (!user || !dbRef.current) return;
 
+                const { doc, updateDoc, addDoc, collection, serverTimestamp } = window.FirebaseSDK;
                 const item = inventory.find(i => i.id === newExit.itemId);
+                
                 if (!item || item.stock < Number(newExit.qty)) {
                     alert("Stock insuficiente o material no válido");
                     return;
                 }
 
                 try {
-                    const itemRef = doc(db, 'artifacts', appId, 'public', 'data', 'inventory', item.docId);
+                    const itemRef = doc(dbRef.current, 'artifacts', appIdRef.current, 'public', 'data', 'inventory', item.docId);
                     await updateDoc(itemRef, { stock: item.stock - Number(newExit.qty) });
                     
-                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'history'), {
+                    await addDoc(collection(dbRef.current, 'artifacts', appIdRef.current, 'public', 'data', 'history'), {
                         tech: newExit.tech,
                         itemId: newExit.itemId,
                         item: item.name,
@@ -164,16 +182,16 @@
                     setNewExit({ tech: '', itemId: '', qty: '' });
                     setActiveTab('history');
                 } catch (err) {
-                    console.error("Error al procesar salida:", err);
-                    alert("Error de permisos al procesar la salida.");
+                    console.error("Error salida:", err);
                 }
             };
 
             const addNewItem = async (e) => {
                 e.preventDefault();
-                if (!user) return;
+                if (!user || !dbRef.current) return;
+                const { collection, addDoc } = window.FirebaseSDK;
                 try {
-                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'inventory'), {
+                    await addDoc(collection(dbRef.current, 'artifacts', appIdRef.current, 'public', 'data', 'inventory'), {
                         ...newItem,
                         id: newItem.id.toUpperCase(),
                         stock: Number(newItem.stock),
@@ -181,23 +199,22 @@
                     });
                     setNewItem({ id: '', name: '', stock: '', min: '', unit: 'pza' });
                 } catch (err) {
-                    console.error("Error al agregar ítem:", err);
-                    alert("Error de permisos al agregar material.");
+                    console.error("Error agregar:", err);
                 }
             };
 
             const deleteItem = async (docId) => {
-                if (!user) return;
+                if (!user || !dbRef.current) return;
+                const { doc, deleteDoc } = window.FirebaseSDK;
                 if(confirm("¿Eliminar este material?")) {
                     try {
-                        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inventory', docId));
+                        await deleteDoc(doc(dbRef.current, 'artifacts', appIdRef.current, 'public', 'data', 'inventory', docId));
                     } catch (err) {
-                        console.error("Error al eliminar:", err);
+                        console.error("Error eliminar:", err);
                     }
                 }
             };
 
-            // Icon Component
             const Icon = ({ name, size = 18, className = "" }) => {
                 const icons = {
                     Zap: <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />,
@@ -207,7 +224,6 @@
                     History: <React.Fragment><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l4 2" /></React.Fragment>,
                     Settings: <React.Fragment><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.72V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.72V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" /></React.Fragment>,
                     Printer: <React.Fragment><polyline points="6 9 6 2 18 2 18 9" /><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" /><rect width="12" height="8" x="6" y="14" /></React.Fragment>,
-                    AlertTriangle: <React.Fragment><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><path d="M12 9v4" /><path d="M12 17h.01" /></React.Fragment>,
                     Trash2: <React.Fragment><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></React.Fragment>,
                     Plus: <React.Fragment><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></React.Fragment>
                 };
@@ -228,10 +244,7 @@
             );
 
             const NavItem = ({ id, icon, label }) => (
-                <button 
-                    onClick={() => setActiveTab(id)}
-                    className={`flex flex-col items-center justify-center flex-1 transition-all ${activeTab === id ? 'text-blue-600' : 'text-slate-400'}`}
-                >
+                <button onClick={() => setActiveTab(id)} className={`flex flex-col items-center justify-center flex-1 transition-all ${activeTab === id ? 'text-blue-600' : 'text-slate-400'}`}>
                     <Icon name={icon} size={24} className={activeTab === id ? 'scale-110' : ''} />
                     <span className="text-[10px] font-bold mt-1 uppercase tracking-tighter">{label}</span>
                 </button>
@@ -239,6 +252,7 @@
 
             return (
                 <div className="flex flex-col min-h-screen pb-20 md:pb-0 md:pl-64">
+                    {/* Navegación Desktop */}
                     <nav className="fixed left-0 top-0 bottom-0 w-64 bg-slate-900 text-white p-6 hidden md:flex flex-col no-print z-50">
                         <div className="flex items-center gap-3 mb-10">
                             <div className="bg-yellow-400 p-2 rounded-lg"><Icon name="Zap" className="text-slate-900" size={24} /></div>
@@ -262,6 +276,7 @@
                         </div>
                     </nav>
 
+                    {/* Navegación Mobile */}
                     <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-100 h-20 flex md:hidden px-2 z-50 no-print">
                         <NavItem id="dashboard" icon="LayoutDashboard" label="Inicio" />
                         <NavItem id="inventory" icon="Package" label="Stock" />
@@ -320,7 +335,6 @@
                                         ))}
                                     </tbody>
                                 </table>
-                                {inventory.length === 0 && <div className="p-10 text-center text-slate-400 italic text-xs">No hay materiales registrados.</div>}
                             </div>
                         )}
 
@@ -353,7 +367,6 @@
                                         </div>
                                     </div>
                                 ))}
-                                {history.length === 0 && <div className="p-10 text-center text-slate-400 italic text-xs">No hay registros de salida aún.</div>}
                             </div>
                         )}
 
