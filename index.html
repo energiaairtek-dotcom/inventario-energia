@@ -8,6 +8,8 @@
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.23/jspdf.plugin.autotable.min.js"></script>
     
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
@@ -42,6 +44,10 @@
             0%, 100% { opacity: 1; }
             50% { opacity: .4; }
         }
+
+        @media print {
+            .no-print { display: none !important; }
+        }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
@@ -52,7 +58,6 @@
         import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, updateDoc, deleteDoc, collection, query, onSnapshot, addDoc, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Firebase Config para Airtek Energía
         const myConfig = {
             apiKey: "AIzaSyDwaK4Z26RfqDwNvwdMqri08oEjwG9qymc",
             authDomain: "almacen-airtek.firebaseapp.com",
@@ -102,6 +107,8 @@
             const dbRef = useRef(null);
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'airtek-energia-v1';
 
+            const monitoresAlmacen = ["LUIS RAMOS", "GUSTAVO RINCÓN", "DIEGO CHACÍN"];
+
             useEffect(() => {
                 const init = async () => {
                     if (!window.FirebaseSDK) return;
@@ -150,6 +157,48 @@
                 return () => { unsubInv(); unsubHist(); };
             }, [isCloud, user, appId]);
 
+            const exportInventoryPDF = () => {
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF();
+                
+                doc.setFontSize(18);
+                doc.text("AIRTEK ENERGÍA - REPORTE DE INVENTARIO", 14, 20);
+                doc.setFontSize(10);
+                doc.text(`Generado: ${new Date().toLocaleString()}`, 14, 28);
+
+                const tableData = inventory.map(i => [i.id, i.name, i.stock, i.unit, i.stock <= i.min ? 'CRÍTICO' : 'OK']);
+                
+                doc.autoTable({
+                    startY: 35,
+                    head: [['Código', 'Artículo', 'Stock', 'Unidad', 'Estado']],
+                    body: tableData,
+                    headStyles: { fillColor: [37, 99, 235] },
+                });
+
+                doc.save(`Inventario_Airtek_${new Date().toISOString().split('T')[0]}.pdf`);
+            };
+
+            const exportHistoryPDF = () => {
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF();
+                
+                doc.setFontSize(18);
+                doc.text("AIRTEK ENERGÍA - BITÁCORA DE MOVIMIENTOS", 14, 20);
+                doc.setFontSize(10);
+                doc.text(`Generado: ${new Date().toLocaleString()}`, 14, 28);
+
+                const tableData = history.map(h => [h.dateStr, h.item, h.qty, h.tech, h.monitor]);
+                
+                doc.autoTable({
+                    startY: 35,
+                    head: [['Fecha', 'Artículo', 'Cant', 'Beneficiario', 'Monitor']],
+                    body: tableData,
+                    headStyles: { fillColor: [37, 99, 235] },
+                });
+
+                doc.save(`Bitacora_Airtek_${new Date().toISOString().split('T')[0]}.pdf`);
+            };
+
             const filteredInventory = useMemo(() => {
                 if (!currentSearch) return [];
                 const search = currentSearch.toLowerCase();
@@ -176,7 +225,7 @@
 
             const handleBulkExit = async (e) => {
                 e.preventDefault();
-                if (selectedItems.length === 0) return;
+                if (selectedItems.length === 0 || !exitHeader.monitor) return;
 
                 const { doc, writeBatch, collection, serverTimestamp } = window.FirebaseSDK;
                 const batch = writeBatch(dbRef.current);
@@ -246,7 +295,7 @@
             if (loading) return (
                 <div className="h-screen flex flex-col items-center justify-center bg-white">
                     <div className="text-blue-600 animate-bounce mb-4"><EnergyLogo className="h-16 w-16" /></div>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Estableciendo conexión...</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Estableciendo conexión segura...</p>
                 </div>
             );
 
@@ -261,7 +310,6 @@
                                         <span className="text-lg font-black text-slate-900 tracking-tighter uppercase">Airtek</span>
                                         <span className="text-[10px] font-black bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded tracking-tighter uppercase">Energía</span>
                                     </div>
-                                    {/* INDICADOR DE SERVIDOR ACTIVO */}
                                     <div className="flex items-center gap-1.5 mt-0.5">
                                         <span className={`w-1.5 h-1.5 rounded-full ${isCloud ? 'bg-emerald-500 pulse-online' : 'bg-red-500'}`}></span>
                                         <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
@@ -289,7 +337,6 @@
                         </nav>
 
                         <main className="tab-content">
-                            {/* MODAL EDICIÓN */}
                             {editingItem && (
                                 <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
                                     <form onSubmit={handleSaveEdit} className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl p-8 space-y-4">
@@ -322,6 +369,10 @@
                                 <div className="space-y-3">
                                     <div className="flex justify-between items-center px-4">
                                         <h2 className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Existencias Actuales</h2>
+                                        <button onClick={exportInventoryPDF} className="bg-slate-900 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center gap-2">
+                                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M6 2a2 2 0 00-2 2v12a2 2 0 002 2h8a2 2 0 002-2V7.414A2 2 0 0015.414 6L12 2.586A2 2 0 0010.586 2H6zm5 2l4 4H11V4z"/></svg>
+                                            Exportar PDF
+                                        </button>
                                     </div>
                                     <div className="grid grid-cols-1 gap-3">
                                         {inventory.map(i => (
@@ -363,7 +414,15 @@
                                             </div>
                                             <div className="space-y-1">
                                                 <label className="text-[9px] font-black text-blue-600 uppercase ml-4">Monitor de Almacén</label>
-                                                <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold border-2 border-transparent focus:border-blue-400 outline-none uppercase" value={exitHeader.monitor} onChange={e=>setExitHeader({...exitHeader, monitor: e.target.value})} placeholder="RESPONSABLE" />
+                                                <select 
+                                                    required 
+                                                    className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold border-2 border-transparent focus:border-blue-400 outline-none uppercase appearance-none"
+                                                    value={exitHeader.monitor} 
+                                                    onChange={e=>setExitHeader({...exitHeader, monitor: e.target.value})}
+                                                >
+                                                    <option value="">SELECCIONAR RESPONSABLE</option>
+                                                    {monitoresAlmacen.map(m => <option key={m} value={m}>{m}</option>)}
+                                                </select>
                                             </div>
                                         </div>
 
@@ -473,7 +532,13 @@
 
                             {activeTab === 'history' && (
                                 <div className="space-y-3">
-                                    <h2 className="text-[10px] font-black uppercase text-slate-400 tracking-widest px-4">Movimientos Recientes</h2>
+                                    <div className="flex justify-between items-center px-4">
+                                        <h2 className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Movimientos Recientes</h2>
+                                        <button onClick={exportHistoryPDF} className="bg-slate-900 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center gap-2">
+                                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M6 2a2 2 0 00-2 2v12a2 2 0 002 2h8a2 2 0 002-2V7.414A2 2 0 0015.414 6L12 2.586A2 2 0 0010.586 2H6zm5 2l4 4H11V4z"/></svg>
+                                            Exportar PDF
+                                        </button>
+                                    </div>
                                     {history.map(h => (
                                         <div key={h.id} className="bg-white p-5 rounded-[2.2rem] flex flex-col sm:flex-row justify-between items-center shadow-sm border border-l-4 border-l-blue-500 gap-3">
                                             <div className="flex flex-col text-center sm:text-left">
