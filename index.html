@@ -12,6 +12,15 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <!-- Iconos Lucide (Versión compatible) -->
     <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        @media print {
+            nav { display: none !important; }
+            main { padding: 0 !important; }
+            .no-print { display: none !important; }
+        }
+    </style>
 </head>
 <body class="bg-slate-50">
     <div id="root"></div>
@@ -19,14 +28,14 @@
     <script type="text/babel">
         const { useState, useRef, useEffect } = React;
 
-        // Helper para usar iconos de Lucide en React sin la librería lucide-react (que causa conflictos en UMD)
+        // Helper para usar iconos de Lucide en React de forma segura
         const Icon = ({ name, size = 18, className = "" }) => {
             const iconRef = useRef(null);
             
             useEffect(() => {
-                if (iconRef.current) {
-                    lucide.createIcons({
-                        icons: { [name]: lucide.icons[name] },
+                if (iconRef.current && window.lucide) {
+                    window.lucide.createIcons({
+                        icons: { [name]: window.lucide.icons[name] },
                         nameAttr: 'data-lucide',
                         attrs: {
                             strokeWidth: 2,
@@ -43,128 +52,104 @@
 
         const App = () => {
             const [activeTab, setActiveTab] = useState('dashboard');
-            const [searchTerm, setSearchTerm] = useState('');
             const [isAdminMode, setIsAdminMode] = useState(false);
             
-            // Inventario Inicial
             const [inventory, setInventory] = useState([
-                { id: 'FUS-10A', name: 'Fusible cerámico 10A', stock: 50, min: 10, unit: 'pza', category: 'Protecciones' },
-                { id: 'TER-6MM', name: 'Terminal de ojo 6mm', stock: 100, min: 20, unit: 'pza', category: 'Conectorización' },
-                { id: 'CIN-AIS', name: 'Cinta aislante negra 3M', stock: 12, min: 5, unit: 'rollos', category: 'Aislamiento' }
+                { id: 'FUS-10A', name: 'Fusible cerámico 10A', stock: 50, min: 10, unit: 'pza' },
+                { id: 'TER-6MM', name: 'Terminal de ojo 6mm', stock: 100, min: 20, unit: 'pza' },
+                { id: 'CIN-AIS', name: 'Cinta aislante negra 3M', stock: 12, min: 5, unit: 'rollos' }
             ]);
 
             const [history, setHistory] = useState([]);
             const [newExit, setNewExit] = useState({ tech: '', itemId: '', qty: '', project: '' });
-            const [newItem, setNewItem] = useState({ id: '', name: '', stock: '', min: '', unit: 'pza', category: 'General' });
+            const [newItem, setNewItem] = useState({ id: '', name: '', stock: '', min: '', unit: 'pza' });
 
             const addNewItem = (e) => {
                 e.preventDefault();
                 setInventory([...inventory, { ...newItem, stock: Number(newItem.stock), min: Number(newItem.min) }]);
-                setNewItem({ id: '', name: '', stock: '', min: '', unit: 'pza', category: 'General' });
-            };
-
-            const deleteItem = (id) => {
-                if (confirm("¿Eliminar este insumo?")) {
-                    setInventory(inventory.filter(i => i.id !== id));
-                }
+                setNewItem({ id: '', name: '', stock: '', min: '', unit: 'pza' });
+                alert("Material registrado.");
             };
 
             const handleExitSubmit = (e) => {
                 e.preventDefault();
                 const item = inventory.find(i => i.id === newExit.itemId);
                 if (!item || item.stock < newExit.qty) {
-                    alert("Stock insuficiente");
+                    alert("Stock insuficiente.");
                     return;
                 }
                 setInventory(inventory.map(i => i.id === newExit.itemId ? { ...i, stock: i.stock - Number(newExit.qty) } : i));
-                setHistory([{ id: Date.now(), date: new Date().toLocaleDateString(), ...newExit, item: item.name }, ...history]);
+                setHistory([{ id: Date.now(), date: new Date().toLocaleString(), ...newExit, item: item.name }, ...history]);
                 setNewExit({ tech: '', itemId: '', qty: '', project: '' });
                 setActiveTab('history');
             };
 
             return (
                 <div className="min-h-screen flex">
-                    {/* Sidebar */}
-                    <nav className="w-64 bg-slate-900 text-white p-5 hidden md:flex flex-col">
+                    <nav className="w-64 bg-slate-900 text-white p-5 hidden md:flex flex-col no-print">
                         <div className="flex items-center gap-2 mb-8 px-2">
                             <Icon name="Box" className="text-blue-400" size={28} />
-                            <div>
-                                <h1 className="font-bold text-sm leading-tight uppercase">Consumibles</h1>
-                                <p className="text-[10px] text-slate-400 uppercase tracking-widest">Energía Interno</p>
-                            </div>
+                            <h1 className="font-bold text-sm uppercase">Energía Airtek</h1>
                         </div>
                         <div className="space-y-1 flex-1">
                             <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 p-3 rounded-xl text-sm ${activeTab==='dashboard'?'bg-blue-600':'hover:bg-slate-800'}`}>
                                 <Icon name="LayoutDashboard" /> Dashboard
                             </button>
                             <button onClick={() => setActiveTab('inventory')} className={`w-full flex items-center gap-3 p-3 rounded-xl text-sm ${activeTab==='inventory'?'bg-blue-600':'hover:bg-slate-800'}`}>
-                                <Icon name="Package" /> Stock
-                            </button>
-                            <button onClick={() => setActiveTab('admin')} className={`w-full flex items-center gap-3 p-3 rounded-xl text-sm ${activeTab==='admin'?'bg-blue-600':'hover:bg-slate-800'}`}>
-                                <Icon name="Settings" /> Administrar
+                                <Icon name="Package" /> Inventario
                             </button>
                             <button onClick={() => setActiveTab('new-exit')} className={`w-full flex items-center gap-3 p-3 rounded-xl text-sm ${activeTab==='new-exit'?'bg-blue-600':'hover:bg-slate-800'}`}>
-                                <Icon name="PlusCircle" /> Registrar Gasto
+                                <Icon name="PlusCircle" /> Registrar Salida
                             </button>
                             <button onClick={() => setActiveTab('history')} className={`w-full flex items-center gap-3 p-3 rounded-xl text-sm ${activeTab==='history'?'bg-blue-600':'hover:bg-slate-800'}`}>
                                 <Icon name="ClipboardList" /> Historial
                             </button>
+                            <button onClick={() => setActiveTab('admin')} className={`w-full flex items-center gap-3 p-3 rounded-xl text-sm ${activeTab==='admin'?'bg-blue-600':'hover:bg-slate-800'}`}>
+                                <Icon name="Settings" /> Configuración
+                            </button>
                         </div>
-                        <div className="border-t border-slate-800 pt-4">
-                            <div className="flex items-center justify-between px-2 py-4">
-                                <span className="text-[10px] font-bold text-slate-500 uppercase">Modo Editor</span>
-                                <button onClick={() => setIsAdminMode(!isAdminMode)} className={`w-10 h-5 rounded-full relative ${isAdminMode ? 'bg-blue-600' : 'bg-slate-700'}`}>
-                                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${isAdminMode ? 'left-6' : 'left-1'}`} />
-                                </button>
-                            </div>
+                        <div className="border-t border-slate-800 pt-4 flex items-center justify-between px-2">
+                            <span className="text-[10px] uppercase text-slate-500">Editor</span>
+                            <button onClick={() => setIsAdminMode(!isAdminMode)} className={`w-8 h-4 rounded-full relative ${isAdminMode?'bg-blue-500':'bg-slate-700'}`}>
+                                <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${isAdminMode?'left-4':'left-0.5'}`} />
+                            </button>
                         </div>
                     </nav>
 
-                    {/* Contenido Principal */}
                     <main className="flex-1 overflow-y-auto">
-                        <header className="bg-white border-b px-8 py-5 flex justify-between items-center sticky top-0 z-10">
-                            <h2 className="text-xl font-bold text-slate-800 uppercase tracking-tight">{activeTab}</h2>
-                            <button onClick={() => window.print()} className="bg-slate-100 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2">
-                                <Icon name="Printer" size={16} /> REPORTE
-                            </button>
+                        <header className="bg-white border-b px-8 py-4 flex justify-between items-center no-print">
+                            <h2 className="font-bold uppercase text-slate-700">{activeTab}</h2>
+                            <button onClick={() => window.print()} className="bg-slate-100 p-2 rounded-lg"><Icon name="Printer" size={16}/></button>
                         </header>
 
                         <div className="p-8 max-w-5xl mx-auto">
                             {activeTab === 'dashboard' && (
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                     <div className="bg-white p-6 rounded-2xl border shadow-sm">
-                                        <p className="text-[10px] font-bold text-slate-400 uppercase">Total Insumos</p>
-                                        <p className="text-3xl font-black">{inventory.length}</p>
+                                        <p className="text-xs font-bold text-slate-400 uppercase">Alertas de Stock</p>
+                                        <p className="text-4xl font-black text-red-500">{inventory.filter(i=>i.stock<=i.min).length}</p>
                                     </div>
                                     <div className="bg-white p-6 rounded-2xl border shadow-sm">
-                                        <p className="text-[10px] font-bold text-slate-400 uppercase">Bajo Stock</p>
-                                        <p className="text-3xl font-black text-red-500">{inventory.filter(i=>i.stock<=i.min).length}</p>
+                                        <p className="text-xs font-bold text-slate-400 uppercase">Salidas del día</p>
+                                        <p className="text-4xl font-black text-blue-600">{history.length}</p>
                                     </div>
                                 </div>
                             )}
 
                             {activeTab === 'inventory' && (
-                                <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+                                <div className="bg-white rounded-xl border overflow-hidden">
                                     <table className="w-full text-left">
-                                        <thead className="bg-slate-50 text-[10px] font-bold uppercase">
-                                            <tr>
-                                                <th className="p-4">Nombre</th>
-                                                <th className="p-4">Stock</th>
-                                                {isAdminMode && <th className="p-4">Acción</th>}
-                                            </tr>
+                                        <thead className="bg-slate-50 text-[10px] uppercase font-bold border-b">
+                                            <tr><th className="p-4">Material</th><th className="p-4">Stock</th><th className="p-4">Estado</th></tr>
                                         </thead>
-                                        <tbody className="divide-y text-sm">
+                                        <tbody className="text-sm divide-y">
                                             {inventory.map(item => (
                                                 <tr key={item.id}>
                                                     <td className="p-4 font-semibold">{item.name}</td>
                                                     <td className="p-4 font-bold">{item.stock} {item.unit}</td>
-                                                    {isAdminMode && (
-                                                        <td className="p-4">
-                                                            <button onClick={() => deleteItem(item.id)} className="text-red-400">
-                                                                <Icon name="Trash2" size={16} />
-                                                            </button>
-                                                        </td>
-                                                    )}
+                                                    <td className="p-4">
+                                                        {item.stock <= item.min ? <span className="text-red-500 font-bold">REABASTECER</span> : <span className="text-green-500">OK</span>}
+                                                    </td>
                                                 </tr>
                                             ))}
                                         </tbody>
@@ -172,66 +157,45 @@
                                 </div>
                             )}
 
-                            {activeTab === 'admin' && (
-                                <div className="bg-white p-8 rounded-2xl border shadow-lg">
-                                    <h3 className="font-bold mb-6 flex items-center gap-2">
-                                        <Icon name="Plus" className="text-blue-500" /> NUEVO INSUMO
-                                    </h3>
-                                    <form onSubmit={addNewItem} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        <input placeholder="SKU" className="p-3 bg-slate-50 border rounded-xl text-sm outline-none" onChange={e=>setNewItem({...newItem, id: e.target.value})} value={newItem.id} />
-                                        <input placeholder="Nombre" className="p-3 bg-slate-50 border rounded-xl text-sm outline-none" onChange={e=>setNewItem({...newItem, name: e.target.value})} value={newItem.name} />
-                                        <input placeholder="Stock" type="number" className="p-3 bg-slate-50 border rounded-xl text-sm outline-none" onChange={e=>setNewItem({...newItem, stock: e.target.value})} value={newItem.stock} />
-                                        <input placeholder="Mínimo" type="number" className="p-3 bg-slate-50 border rounded-xl text-sm outline-none" onChange={e=>setNewItem({...newItem, min: e.target.value})} value={newItem.min} />
-                                        <button className="md:col-span-2 bg-blue-600 text-white p-3 rounded-xl font-bold hover:bg-blue-700 transition-colors">
-                                            AGREGAR AL INVENTARIO
-                                        </button>
-                                    </form>
-                                </div>
-                            )}
-
                             {activeTab === 'new-exit' && (
-                                <div className="bg-white p-8 rounded-2xl border shadow-lg max-w-md mx-auto">
-                                    <h3 className="font-bold mb-6 text-center uppercase">Registrar Retiro</h3>
+                                <div className="bg-white p-6 rounded-2xl border max-w-md mx-auto shadow-lg">
                                     <form onSubmit={handleExitSubmit} className="space-y-4">
-                                        <input required placeholder="Técnico" className="w-full p-3 bg-slate-50 border rounded-xl text-sm outline-none" value={newExit.tech} onChange={e=>setNewExit({...newExit, tech: e.target.value})} />
-                                        <input required placeholder="Actividad" className="w-full p-3 bg-slate-50 border rounded-xl text-sm outline-none" value={newExit.project} onChange={e=>setNewExit({...newExit, project: e.target.value})} />
-                                        <select required className="w-full p-3 bg-slate-50 border rounded-xl text-sm outline-none" value={newExit.itemId} onChange={e=>setNewExit({...newExit, itemId: e.target.value})}>
-                                            <option value="">Seleccionar insumo...</option>
-                                            {inventory.map(i => <option key={i.id} value={i.id}>{i.name} ({i.stock} disp.)</option>)}
+                                        <input required placeholder="Técnico" className="w-full p-3 bg-slate-50 border rounded-xl" value={newExit.tech} onChange={e=>setNewExit({...newExit, tech: e.target.value})} />
+                                        <select required className="w-full p-3 bg-slate-50 border rounded-xl" value={newExit.itemId} onChange={e=>setNewExit({...newExit, itemId: e.target.value})}>
+                                            <option value="">Seleccionar material...</option>
+                                            {inventory.map(i => <option key={i.id} value={i.id}>{i.name} ({i.stock})</option>)}
                                         </select>
-                                        <input required type="number" placeholder="Cantidad" className="w-full p-3 bg-slate-50 border rounded-xl text-sm outline-none" value={newExit.qty} onChange={e=>setNewExit({...newExit, qty: e.target.value})} />
-                                        <button className="w-full bg-slate-900 text-white p-3 rounded-xl font-bold hover:bg-blue-600 transition-colors">
-                                            CONFIRMAR RETIRO
-                                        </button>
+                                        <input required type="number" placeholder="Cantidad" className="w-full p-3 bg-slate-50 border rounded-xl" value={newExit.qty} onChange={e=>setNewExit({...newExit, qty: e.target.value})} />
+                                        <button className="w-full bg-slate-900 text-white p-3 rounded-xl font-bold">REGISTRAR SALIDA</button>
                                     </form>
                                 </div>
                             )}
 
                             {activeTab === 'history' && (
-                                <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-                                    <table className="w-full text-left">
-                                        <thead className="bg-slate-50 text-[10px] font-bold uppercase">
-                                            <tr>
-                                                <th className="p-4">Fecha</th>
-                                                <th className="p-4">Técnico</th>
-                                                <th className="p-4">Insumo</th>
-                                                <th className="p-4">Cant.</th>
-                                            </tr>
+                                <div className="bg-white rounded-xl border overflow-hidden">
+                                    <table className="w-full text-left text-sm">
+                                        <thead className="bg-slate-50 uppercase text-[10px] font-bold border-b">
+                                            <tr><th className="p-4">Fecha</th><th className="p-4">Técnico</th><th className="p-4">Material</th><th className="p-4">Cant.</th></tr>
                                         </thead>
-                                        <tbody className="divide-y text-sm">
-                                            {history.map(entry => (
-                                                <tr key={entry.id}>
-                                                    <td className="p-4 text-slate-400">{entry.date}</td>
-                                                    <td className="p-4 font-semibold">{entry.tech}</td>
-                                                    <td className="p-4 text-blue-600">{entry.item}</td>
-                                                    <td className="p-4 font-bold">{entry.qty}</td>
-                                                </tr>
+                                        <tbody className="divide-y">
+                                            {history.map(h => (
+                                                <tr key={h.id}><td className="p-4 text-slate-400">{h.date}</td><td className="p-4 font-bold">{h.tech}</td><td className="p-4">{h.item}</td><td className="p-4 font-bold">{h.qty}</td></tr>
                                             ))}
-                                            {history.length === 0 && (
-                                                <tr><td colSpan="4" className="p-8 text-center text-slate-400 italic">No hay registros hoy</td></tr>
-                                            )}
                                         </tbody>
                                     </table>
+                                </div>
+                            )}
+
+                            {activeTab === 'admin' && isAdminMode && (
+                                <div className="bg-white p-6 rounded-2xl border shadow-sm">
+                                    <h3 className="font-bold mb-4">Añadir al Maestro de Materiales</h3>
+                                    <form onSubmit={addNewItem} className="grid grid-cols-2 gap-4">
+                                        <input required placeholder="SKU" className="p-3 bg-slate-50 border rounded-xl" onChange={e=>setNewItem({...newItem, id: e.target.value})} />
+                                        <input required placeholder="Nombre" className="p-3 bg-slate-50 border rounded-xl" onChange={e=>setNewItem({...newItem, name: e.target.value})} />
+                                        <input required type="number" placeholder="Stock Inicial" className="p-3 bg-slate-50 border rounded-xl" onChange={e=>setNewItem({...newItem, stock: e.target.value})} />
+                                        <input required type="number" placeholder="Mínimo" className="p-3 bg-slate-50 border rounded-xl" onChange={e=>setNewItem({...newItem, min: e.target.value})} />
+                                        <button className="col-span-2 bg-blue-600 text-white p-3 rounded-xl font-bold">GUARDAR</button>
+                                    </form>
                                 </div>
                             )}
                         </div>
