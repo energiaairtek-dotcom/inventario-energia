@@ -109,9 +109,12 @@
             // Filter state for History
             const [filterItemId, setFilterItemId] = useState('all');
 
-            // Admin state
+            // Admin & Editing state
             const [newItem, setNewItem] = useState({ id: '', name: '', stock: '', min: 5, unit: 'PZA' });
             const [editingItem, setEditingItem] = useState(null);
+            const [restockItem, setRestockItem] = useState(null); // Nuevo estado para reposición
+            const [restockQty, setRestockQty] = useState('');
+            const [restockResp, setRestockResp] = useState('');
 
             const dbRef = useRef(null);
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'airtek-energia-v1';
@@ -206,14 +209,15 @@
                 const tableData = filteredData.map(h => [
                     String(h.dateStr).toUpperCase(), 
                     String(h.item).toUpperCase(), 
-                    h.qty, 
-                    String(h.tech).toUpperCase(), 
+                    h.type === 'ENTRADA' ? `+${h.qty}` : `-${h.qty}`, // Diferenciar signo
+                    String(h.type || 'SALIDA').toUpperCase(),
+                    String(h.tech || h.responsible || '---').toUpperCase(), 
                     String(h.monitor || '---').toUpperCase()
                 ]);
                 
                 doc.autoTable({
                     startY: 35,
-                    head: [['FECHA', 'ARTÍCULO', 'CANT', 'BENEFICIARIO', 'MONITOR']],
+                    head: [['FECHA', 'ARTÍCULO', 'CANT', 'TIPO', 'RESPONSABLE', 'MONITOR']],
                     body: tableData,
                     headStyles: { fillColor: [37, 99, 235] },
                     styles: { textTransform: 'uppercase' }
@@ -251,6 +255,42 @@
                 setSelectedItems(selectedItems.map(i => i.id === id ? { ...i, qty: Math.max(1, Number(newQty)) } : i));
             };
 
+            // MANEJO DE REPOSICIÓN DE STOCK (ENTRADA)
+            const handleRestockSubmit = async (e) => {
+                e.preventDefault();
+                if (!restockItem || !restockQty) return;
+
+                const { doc, updateDoc, addDoc, collection, serverTimestamp } = window.FirebaseSDK;
+                const qtyNum = Number(restockQty);
+                const dateStr = new Date().toLocaleString().toUpperCase();
+
+                try {
+                    // Actualizar Inventario
+                    await updateDoc(doc(dbRef.current, 'artifacts', appId, 'public', 'data', 'inventory', restockItem.docId), {
+                        stock: restockItem.stock + qtyNum
+                    });
+
+                    // Registrar en Historial como ENTRADA
+                    await addDoc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'history'), {
+                        type: 'ENTRADA',
+                        item: restockItem.name.toUpperCase(),
+                        itemId: restockItem.id.toUpperCase(),
+                        qty: qtyNum,
+                        responsible: restockResp.toUpperCase() || 'ALMACÉN', // Quien repone
+                        tech: 'ALMACÉN', // Para mantener consistencia en campos
+                        monitor: restockResp.toUpperCase(),
+                        description: 'REPOSICIÓN DE STOCK',
+                        dateStr: dateStr,
+                        timestamp: serverTimestamp()
+                    });
+
+                    setRestockItem(null);
+                    setRestockQty('');
+                    setRestockResp('');
+                    setActiveTab('history'); // Ir a historial para ver el ingreso
+                } catch (err) { console.error(err); }
+            };
+
             const handleBulkExit = async (e) => {
                 e.preventDefault();
                 if (selectedItems.length === 0 || !exitHeader.monitor) return;
@@ -266,6 +306,7 @@
 
                         const histColRef = doc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'history'));
                         batch.set(histColRef, {
+                            type: 'SALIDA',
                             tech: exitHeader.tech.toUpperCase(),
                             monitor: exitHeader.monitor.toUpperCase(),
                             description: exitHeader.description.toUpperCase(),
@@ -284,18 +325,10 @@
                 } catch (err) { console.error(err); }
             };
 
-            const updateStock = async (docId, currentStock, mod) => {
-                const { doc, updateDoc } = window.FirebaseSDK;
-                try {
-                    await updateDoc(doc(dbRef.current, 'artifacts', appId, 'public', 'data', 'inventory', docId), {
-                        stock: Math.max(0, currentStock + mod)
-                    });
-                } catch (err) { console.error(err); }
-            };
-
             const handleAddItem = async (e) => {
                 e.preventDefault();
                 const { collection, addDoc, serverTimestamp } = window.FirebaseSDK;
+                const dateStr = new Date().toLocaleString().toUpperCase();
                 try {
                     await addDoc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'inventory'), {
                         id: newItem.id.toUpperCase(),
@@ -305,6 +338,23 @@
                         unit: newItem.unit.toUpperCase(),
                         createdAt: serverTimestamp()
                     });
+
+                    // Registrar la creación inicial como una entrada también
+                    if (Number(newItem.stock) > 0) {
+                        await addDoc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'history'), {
+                            type: 'ENTRADA',
+                            item: newItem.name.toUpperCase(),
+                            itemId: newItem.id.toUpperCase(),
+                            qty: Number(newItem.stock),
+                            responsible: 'ADMINISTRADOR',
+                            tech: 'ALMACÉN',
+                            monitor: 'CREACIÓN',
+                            description: 'INVENTARIO INICIAL',
+                            dateStr: dateStr,
+                            timestamp: serverTimestamp()
+                        });
+                    }
+
                     setNewItem({ id: '', name: '', stock: '', min: 5, unit: 'PZA' });
                     setActiveTab('inventory');
                 } catch (err) { console.error(err); }
@@ -339,7 +389,7 @@
                                 <div className="bg-blue-600 text-white p-2 rounded-xl shadow-lg"><EnergyLogo className="h-7 w-7" /></div>
                                 <div>
                                     <div className="flex items-center gap-2">
-                                        <span className="text-lg font-black text-slate-900 tracking-tighter uppercase">AIRTEK</span>
+                                        <span className="text-lg font-black text-slate-900 tracking-tighter uppercase">Airtek</span>
                                         <span className="text-[10px] font-black bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded tracking-tighter uppercase">ENERGÍA</span>
                                     </div>
                                     <div className="flex items-center gap-1.5 mt-0.5">
@@ -361,7 +411,7 @@
                                 {id: 'admin', label: 'MAESTRO'}, 
                                 {id: 'history', label: 'BITÁCORA'}
                             ].map(t => (
-                                <button key={t.id} onClick={() => {setActiveTab(t.id); setEditingItem(null);}} 
+                                <button key={t.id} onClick={() => {setActiveTab(t.id); setEditingItem(null); setRestockItem(null);}} 
                                     className={`flex-1 min-w-[90px] py-3 rounded-2xl font-black text-[10px] uppercase tracking-wider transition-all ${activeTab === t.id ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-blue-500 hover:bg-blue-50'}`}>
                                     {t.label}
                                 </button>
@@ -369,6 +419,39 @@
                         </nav>
 
                         <main className="tab-content">
+                            {/* MODAL REPOSICIÓN */}
+                            {restockItem && (
+                                <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+                                    <form onSubmit={handleRestockSubmit} className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl p-8 space-y-4">
+                                        <div className="text-center mb-2">
+                                            <h3 className="text-sm font-black uppercase text-emerald-600 tracking-tighter">REPOSICIÓN DE STOCK</h3>
+                                            <p className="text-[10px] font-black text-slate-400 mt-1">{restockItem.name}</p>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-[9px] font-black text-slate-400 uppercase ml-4">CANTIDAD A INGRESAR</label>
+                                            <input autoFocus required type="number" min="1" className="w-full p-4 bg-emerald-50 rounded-2xl text-[14px] font-black text-center border-2 border-emerald-100 focus:border-emerald-500 outline-none text-emerald-800" value={restockQty} onChange={e=>setRestockQty(e.target.value)} />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-[9px] font-black text-slate-400 uppercase ml-4">RESPONSABLE</label>
+                                            <select 
+                                                required 
+                                                className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black border-2 border-transparent focus:border-emerald-400 outline-none uppercase appearance-none"
+                                                value={restockResp} 
+                                                onChange={e=>setRestockResp(e.target.value)}
+                                            >
+                                                <option value="">SELECCIONAR...</option>
+                                                {monitoresAlmacen.map(m => <option key={m} value={m}>{m}</option>)}
+                                            </select>
+                                        </div>
+                                        <div className="flex gap-3 pt-4">
+                                            <button type="button" onClick={()=>{setRestockItem(null); setRestockQty('');}} className="flex-1 py-4 rounded-2xl font-black uppercase text-[10px] text-slate-400 hover:bg-slate-50">CANCELAR</button>
+                                            <button type="submit" className="flex-2 bg-emerald-500 text-white px-8 py-4 rounded-2xl font-black uppercase text-[10px] shadow-lg shadow-emerald-200 hover:bg-emerald-600">CONFIRMAR INGRESO</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            )}
+
+                            {/* MODAL EDICIÓN */}
                             {editingItem && (
                                 <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
                                     <form onSubmit={handleSaveEdit} className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl p-8 space-y-4">
@@ -419,12 +502,14 @@
                                                     </div>
                                                 </div>
                                                 <div className="flex items-center gap-4 bg-slate-50 p-1.5 rounded-2xl">
-                                                    <button onClick={() => updateStock(i.docId, i.stock, -1)} className="w-9 h-9 flex items-center justify-center bg-white rounded-xl font-bold text-slate-400">-</button>
                                                     <div className="px-4 text-center min-w-[70px]">
                                                         <div className={`font-black text-lg ${i.stock <= i.min ? 'text-red-500' : 'text-slate-900'}`}>{i.stock}</div>
                                                         <div className="text-[8px] text-slate-300 font-extrabold uppercase">{i.unit}</div>
                                                     </div>
-                                                    <button onClick={() => updateStock(i.docId, i.stock, 1)} className="w-9 h-9 flex items-center justify-center bg-white rounded-xl font-bold text-slate-400">+</button>
+                                                    <button onClick={() => setRestockItem(i)} className="px-4 py-2 bg-white rounded-xl font-black text-[10px] text-emerald-500 hover:bg-emerald-50 shadow-sm transition-colors uppercase tracking-tight flex items-center gap-2">
+                                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M12 4v16m8-8H4"></path></svg>
+                                                        REPONER
+                                                    </button>
                                                 </div>
                                             </div>
                                         ))}
@@ -589,17 +674,19 @@
                                             </div>
                                         ) : (
                                             historyToShow.map(h => (
-                                                <div key={h.id} className="bg-white p-5 rounded-[2.2rem] flex flex-col sm:flex-row justify-between items-center shadow-sm border border-l-4 border-l-blue-500 gap-3">
+                                                <div key={h.id} className={`bg-white p-5 rounded-[2.2rem] flex flex-col sm:flex-row justify-between items-center shadow-sm border border-l-4 ${h.type === 'ENTRADA' ? 'border-l-emerald-500' : 'border-l-red-500'} gap-3`}>
                                                     <div className="flex flex-col text-center sm:text-left">
                                                         <div className="font-black text-[12px] uppercase text-slate-800 tracking-tighter">{h.item}</div>
                                                         <div className="text-[9px] font-black text-slate-500 mt-1 uppercase">
-                                                            PARA: <span className="text-slate-900">{h.tech}</span>
+                                                            {h.type || 'SALIDA'}: <span className="text-slate-900">{h.type === 'ENTRADA' ? h.responsible : h.tech}</span>
                                                             <span className="mx-2 text-slate-200">|</span>
                                                             POR: <span className="text-blue-600">{h.monitor || '---'}</span>
                                                         </div>
                                                     </div>
-                                                    <div className="text-center sm:text-right shrink-0 bg-slate-50 px-4 py-2 rounded-2xl">
-                                                        <div className="text-red-600 font-black text-sm italic tracking-tighter">-{h.qty}</div>
+                                                    <div className={`text-center sm:text-right shrink-0 px-4 py-2 rounded-2xl ${h.type === 'ENTRADA' ? 'bg-emerald-50' : 'bg-red-50'}`}>
+                                                        <div className={`${h.type === 'ENTRADA' ? 'text-emerald-600' : 'text-red-600'} font-black text-sm italic tracking-tighter`}>
+                                                            {h.type === 'ENTRADA' ? '+' : '-'}{h.qty}
+                                                        </div>
                                                         <div className="text-[8px] text-slate-400 font-black uppercase mt-0.5">{h.dateStr}</div>
                                                     </div>
                                                 </div>
