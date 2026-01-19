@@ -101,6 +101,7 @@
             const [activeTab, setActiveTab] = useState('inventory');
             const [exitHeader, setExitHeader] = useState({ tech: '', monitor: '', description: '' });
             const [currentSearch, setCurrentSearch] = useState('');
+            const [toolSearch, setToolSearch] = useState(''); // Nueva búsqueda de herramientas
             const [showSearchList, setShowSearchList] = useState(false);
             const [selectedItems, setSelectedItems] = useState([]); 
             const [loaningTool, setLoaningTool] = useState(null);
@@ -156,6 +157,19 @@
                 const unsubTools = onSnapshot(toolsPath, (snap) => setTools(snap.docs.map(d => ({ ...d.data(), docId: d.id }))));
                 return () => { unsubInv(); unsubHist(); unsubTools(); };
             }, [isCloud, user, appId]);
+
+            // Herramientas ordenadas y filtradas
+            const sortedAndFilteredTools = useMemo(() => {
+                let list = [...tools];
+                // Orden alfabético
+                list.sort((a, b) => a.name.localeCompare(b.name));
+                // Filtro de búsqueda
+                if (toolSearch) {
+                    const search = toolSearch.toLowerCase();
+                    list = list.filter(t => t.name.toLowerCase().includes(search) || t.id.toLowerCase().includes(search));
+                }
+                return list;
+            }, [tools, toolSearch]);
 
             const handleToolLoan = async (e) => {
                 e.preventDefault();
@@ -386,13 +400,35 @@
 
                             {activeTab === 'tools' && (
                                 <div className="space-y-6">
-                                    <div className="flex justify-between items-center px-4"><h2 className="text-[10px] font-black text-slate-400 tracking-widest">CONTROL HERRAMIENTAS</h2></div>
-                                    <div className="space-y-3">{tools.map(t => (
-                                        <div key={t.docId} className={`bg-white p-5 rounded-[2rem] flex flex-col sm:flex-row justify-between items-center shadow-sm border ${t.status === 'PRESTADO' ? 'border-orange-200 bg-orange-50/30' : 'border-slate-100'}`}>
-                                            <div className="flex items-center gap-4"><div className={`p-3 rounded-xl ${t.status === 'PRESTADO' ? 'bg-orange-100 text-orange-500' : 'bg-emerald-100 text-emerald-500'}`}><EnergyLogo className="w-5 h-5" /></div><div className="flex flex-col"><span className="font-black text-[13px] text-slate-800">{t.name}</span><span className="text-[9px] text-slate-400 font-mono">{t.id}</span>{t.status === 'PRESTADO' && <span className="text-[9px] font-black text-orange-500 mt-1">ASIGNADO A: {t.assignedTo}</span>}</div></div>
-                                            <div className="flex items-center gap-2 mt-3 sm:mt-0">{t.status === 'DISPONIBLE' ? <button onClick={() => setLoaningTool(t)} className="px-6 py-3 bg-slate-900 text-white rounded-xl text-[10px] uppercase tracking-widest">PRESTAR</button> : <button onClick={() => handleToolReturn(t)} className="px-6 py-3 bg-white border-2 border-orange-500 text-orange-500 rounded-xl text-[10px] uppercase tracking-widest">DEVOLVER</button>}{isAdminMode && <button onClick={() => deleteTool(t.docId, t.name)} className="p-3 bg-red-50 text-red-400 rounded-xl">×</button>}</div>
+                                    <div className="flex flex-col gap-4 px-4">
+                                        <h2 className="text-[10px] font-black text-slate-400 tracking-widest uppercase">CONTROL HERRAMIENTAS</h2>
+                                        {/* BARRA BUSCADORA DE HERRAMIENTAS */}
+                                        <div className="relative">
+                                            <input 
+                                                className="w-full p-4 bg-white rounded-2xl text-[11px] font-black shadow-sm border border-slate-100 outline-none uppercase pr-12" 
+                                                value={toolSearch} 
+                                                onChange={e => setToolSearch(e.target.value)} 
+                                                placeholder="BUSCAR HERRAMIENTA O CÓDIGO..." 
+                                            />
+                                            <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300">
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                                            </div>
                                         </div>
-                                    ))}</div>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                        {sortedAndFilteredTools.length > 0 ? (
+                                            sortedAndFilteredTools.map(t => (
+                                                <div key={t.docId} className={`bg-white p-5 rounded-[2rem] flex flex-col sm:flex-row justify-between items-center shadow-sm border ${t.status === 'PRESTADO' ? 'border-orange-200 bg-orange-50/30' : 'border-slate-100'}`}>
+                                                    <div className="flex items-center gap-4"><div className={`p-3 rounded-xl ${t.status === 'PRESTADO' ? 'bg-orange-100 text-orange-500' : 'bg-emerald-100 text-emerald-500'}`}><EnergyLogo className="w-5 h-5" /></div><div className="flex flex-col"><span className="font-black text-[13px] text-slate-800">{t.name}</span><span className="text-[9px] text-slate-400 font-mono">{t.id}</span>{t.status === 'PRESTADO' && <span className="text-[9px] font-black text-orange-500 mt-1">ASIGNADO A: {t.assignedTo}</span>}</div></div>
+                                                    <div className="flex items-center gap-2 mt-3 sm:mt-0">{t.status === 'DISPONIBLE' ? <button onClick={() => setLoaningTool(t)} className="px-6 py-3 bg-slate-900 text-white rounded-xl text-[10px] uppercase tracking-widest">PRESTAR</button> : <button onClick={() => handleToolReturn(t)} className="px-6 py-3 bg-white border-2 border-orange-500 text-orange-500 rounded-xl text-[10px] uppercase tracking-widest">DEVOLVER</button>}{isAdminMode && <button onClick={() => deleteTool(t.docId, t.name)} className="p-3 bg-red-50 text-red-400 rounded-xl">×</button>}</div>
+                                                </div>
+                                            ))
+                                        ) : (
+                                            <div className="text-center py-10 text-[10px] text-slate-400 font-black">NO SE ENCONTRARON HERRAMIENTAS</div>
+                                        )}
+                                    </div>
+
                                     {isAdminMode && (
                                         <form onSubmit={handleAddTool} className="bg-white p-8 rounded-[2.5rem] shadow-premium space-y-5"><div className="text-center font-black text-slate-800 text-xs">NUEVA HERRAMIENTA</div><input required placeholder="CÓDIGO" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none" value={newTool.id} onChange={e=>setNewTool({...newTool, id: e.target.value.toUpperCase()})} /><input required placeholder="NOMBRE" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none" value={newTool.name} onChange={e=>setNewTool({...newTool, name: e.target.value.toUpperCase()})} /><button className="w-full bg-slate-900 text-white p-5 rounded-3xl font-black uppercase text-[11px]">REGISTRAR</button></form>
                                     )}
@@ -421,7 +457,6 @@
                                                 <div key={h.id} className={`bg-white p-5 rounded-[2.2rem] flex flex-col sm:flex-row justify-between items-center shadow-sm border-l-4 border-l-${colorClass}-500 gap-3`}>
                                                     <div className="text-center sm:text-left"><div className="font-black text-[12px] text-slate-800">{h.item}</div><div className="text-[9px] font-black text-slate-500 mt-1 uppercase">{h.type?.replace('_',' ') || 'SALIDA'}: <span className="text-slate-900">{isEntry && h.type !== 'DEVOLUCION_HERRAMIENTA' ? h.responsible : h.tech}</span><span className="mx-2 text-slate-200">|</span>POR: <span className="text-blue-600">{h.monitor || '---'}</span></div></div>
                                                     <div className={`text-center sm:text-right shrink-0 px-4 py-2 rounded-2xl bg-${colorClass}-50`}>
-                                                        {/* CORRECCIÓN VISUAL DE SIGNO AQUÍ */}
                                                         <div className={`text-${colorClass}-600 font-black text-sm italic`}>{isEntry ? '+' : '-'}{h.qty}</div>
                                                         <div className="text-[8px] text-slate-400 font-black uppercase mt-0.5">{h.dateStr}</div>
                                                     </div>
@@ -463,5 +498,6 @@
     </script>
 </body>
 </html>
+
 
 
