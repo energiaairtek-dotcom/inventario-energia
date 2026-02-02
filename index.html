@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Airtek - Gestión Integral de Almacén y Llaves</title>
+    <title>Airtek - Gestión de Almacén Energía</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -37,8 +37,21 @@
             display: none;
         }
 
+        .pulse-online {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .4; }
+        }
+
         input, select, textarea, option {
             text-transform: uppercase !important;
+        }
+
+        @media print {
+            .no-print { display: none !important; }
         }
     </style>
 </head>
@@ -78,26 +91,37 @@
             </svg>
         );
 
-        const KeyIcon = ({ className = "h-5 w-5" }) => (
-            <svg viewBox="0 0 24 24" fill="none" className={className} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3m-3-3l-2.5-2.5" />
-            </svg>
-        );
-
         const App = () => {
             const [user, setUser] = useState(null);
             const [loading, setLoading] = useState(true);
+            const [isCloud, setIsCloud] = useState(false);
             const [inventory, setInventory] = useState([]);
             const [history, setHistory] = useState([]);
             const [tools, setTools] = useState([]);
             const [keys, setKeys] = useState([]);
             const [activeTab, setActiveTab] = useState('inventory');
-            const [exitHeader, setExitHeader] = useState({ tech: '', monitor: '', description: '' });
+            
+            // Estado Despacho (Consumibles)
+            const [exitHeader, setExitHeader] = useState({ tech: '', monitor: '', supervisor: '', description: '' });
             const [currentSearch, setCurrentSearch] = useState('');
+            const [toolSearch, setToolSearch] = useState('');
+            const [showSearchList, setShowSearchList] = useState(false);
             const [selectedItems, setSelectedItems] = useState([]); 
+            
+            // Estado Préstamos/Devoluciones Herramientas
             const [loaningTool, setLoaningTool] = useState(null);
+            const [returningTool, setReturningTool] = useState(null); 
             const [loaningKey, setLoaningKey] = useState(null);
             const [loanData, setLoanData] = useState({ tech: '', supervisor: '', monitor: '' });
+            const [returnData, setReturnData] = useState({ monitor: '' }); 
+
+            const [filterItemId, setFilterItemId] = useState('all');
+            const [newItem, setNewItem] = useState({ id: '', name: '', stock: '', min: 5, unit: 'PZA' });
+            const [newTool, setNewTool] = useState({ id: '', name: '', brand: '', serial: '' });
+            const [editingItem, setEditingItem] = useState(null);
+            const [restockItem, setRestockItem] = useState(null);
+            const [restockQty, setRestockQty] = useState('');
+            const [restockResp, setRestockResp] = useState('');
             const [isAdminMode, setIsAdminMode] = useState(false);
 
             const dbRef = useRef(null);
@@ -109,14 +133,13 @@
             useEffect(() => {
                 const init = async () => {
                     if (!window.FirebaseSDK) return;
-                    const { initializeApp, getAuth, getFirestore, signInAnonymously, onAuthStateChanged, signInWithCustomToken, doc, getDoc, setDoc, collection } = window.FirebaseSDK;
+                    const { initializeApp, getAuth, getFirestore, signInAnonymously, onAuthStateChanged, signInWithCustomToken, doc, getDoc, setDoc } = window.FirebaseSDK;
                     try {
                         const configStr = typeof __firebase_config !== 'undefined' ? __firebase_config : window.__firebase_config_manual;
                         const config = JSON.parse(configStr);
                         const app = initializeApp(config);
                         dbRef.current = getFirestore(app);
                         const auth = getAuth(app);
-                        
                         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                             await signInWithCustomToken(auth, __initial_auth_token);
                         } else {
@@ -139,7 +162,7 @@
                         }
 
                         const unsubscribe = onAuthStateChanged(auth, (u) => {
-                            if (u) setUser(u);
+                            if (u) { setUser(u); setIsCloud(true); }
                             setLoading(false);
                         });
                         return unsubscribe;
@@ -153,25 +176,103 @@
             useEffect(() => {
                 if (!user || !dbRef.current) return;
                 const { collection, onSnapshot } = window.FirebaseSDK;
+                const invPath = collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'inventory');
+                const histPath = collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'history');
+                const toolsPath = collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'tools_inventory');
+                const keysPath = collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'keys_inventory');
                 
-                const unsubInv = onSnapshot(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'inventory'), 
-                    (snap) => setInventory(snap.docs.map(d => ({ ...d.data(), docId: d.id }))));
-                
-                const unsubHist = onSnapshot(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'history'), 
-                    (snap) => {
-                        const data = snap.docs.map(d => ({ ...d.data(), id: d.id }));
-                        data.sort((a,b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
-                        setHistory(data);
-                    });
-                
-                const unsubTools = onSnapshot(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'tools_inventory'), 
-                    (snap) => setTools(snap.docs.map(d => ({ ...d.data(), docId: d.id }))));
-
-                const unsubKeys = onSnapshot(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'keys_inventory'), 
-                    (snap) => setKeys(snap.docs.map(d => ({ ...d.data(), docId: d.id }))));
+                const unsubInv = onSnapshot(invPath, (snap) => setInventory(snap.docs.map(d => ({ ...d.data(), docId: d.id }))));
+                const unsubHist = onSnapshot(histPath, (snap) => {
+                    const data = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+                    data.sort((a,b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+                    setHistory(data);
+                });
+                const unsubTools = onSnapshot(toolsPath, (snap) => setTools(snap.docs.map(d => ({ ...d.data(), docId: d.id }))));
+                const unsubKeys = onSnapshot(keysPath, (snap) => setKeys(snap.docs.map(d => ({ ...d.data(), docId: d.id }))));
                 
                 return () => { unsubInv(); unsubHist(); unsubTools(); unsubKeys(); };
             }, [user, appId]);
+
+            const sortedAndFilteredTools = useMemo(() => {
+                let list = [...tools];
+                list.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+                if (toolSearch) {
+                    const search = toolSearch.toLowerCase();
+                    list = list.filter(t => (t.name || "").toLowerCase().includes(search) || (t.id || "").toLowerCase().includes(search));
+                }
+                return list;
+            }, [tools, toolSearch]);
+
+            const filteredInventorySearch = useMemo(() => {
+                if (!currentSearch) return [];
+                const search = currentSearch.toLowerCase();
+                return inventory.filter(i => 
+                    i.name.toLowerCase().includes(search) || 
+                    i.id.toLowerCase().includes(search)
+                ).slice(0, 5);
+            }, [currentSearch, inventory]);
+
+            const historyToShow = useMemo(() => {
+                if (filterItemId === 'all') return history;
+                return history.filter(h => h.itemId === filterItemId);
+            }, [filterItemId, history]);
+
+            const exportInventoryPDF = () => {
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF();
+                
+                doc.setFontSize(18);
+                doc.text("AIRTEK ENERGÍA - REPORTE DE INVENTARIO", 14, 20);
+                doc.setFontSize(10);
+                doc.text(`GENERADO: ${new Date().toLocaleString().toUpperCase()}`, 14, 28);
+
+                const tableData = inventory.map(i => [
+                    String(i.id).toUpperCase(), 
+                    String(i.name).toUpperCase(), 
+                    i.stock, 
+                    String(i.unit).toUpperCase(), 
+                    i.stock <= i.min ? 'CRÍTICO' : 'OK'
+                ]);
+                
+                doc.autoTable({
+                    startY: 35,
+                    head: [['CÓDIGO', 'ARTÍCULO', 'STOCK', 'UNIDAD', 'ESTADO']],
+                    body: tableData,
+                    headStyles: { fillColor: [37, 99, 235] },
+                    styles: { textTransform: 'uppercase' }
+                });
+
+                doc.save(`INVENTARIO_AIRTEK_${new Date().toISOString().split('T')[0]}.pdf`);
+            };
+
+            const exportHistoryPDF = (filteredData = history, titleSuffix = "COMPLETA") => {
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF();
+                
+                doc.setFontSize(18);
+                doc.text(`AIRTEK ENERGÍA - BITÁCORA ${titleSuffix}`, 14, 20);
+                doc.setFontSize(10);
+                doc.text(`GENERADO: ${new Date().toLocaleString().toUpperCase()}`, 14, 28);
+
+                const tableData = filteredData.map(h => [
+                    String(h.dateStr || "---").toUpperCase(), 
+                    String(h.item || "---").toUpperCase(), 
+                    (h.type === 'ENTRADA' || h.type === 'DEVOLUCION_HERRAMIENTA') ? `+${h.qty}` : `-${h.qty}`,
+                    String(h.tech || h.responsible || '---').toUpperCase(),
+                    h.type === 'PRESTAMO_HERRAMIENTA' ? String(h.supervisor || '---').toUpperCase() : (h.type === 'SALIDA' ? String(h.supervisor || '---').toUpperCase() : '---'),
+                    String(h.monitor || '---').toUpperCase()
+                ]);
+                
+                doc.autoTable({
+                    startY: 35,
+                    head: [['FECHA', 'ARTÍCULO', 'CANT', 'RESPONSABLE', 'SUPERVISOR', 'MONITOR']],
+                    body: tableData,
+                    headStyles: { fillColor: [37, 99, 235] },
+                    styles: { textTransform: 'uppercase', fontSize: 7 }
+                });
+
+                doc.save(`BITACORA_${titleSuffix}.pdf`);
+            };
 
             const handleToolLoan = async (e) => {
                 e.preventDefault();
@@ -199,6 +300,35 @@
                     });
                     setLoaningTool(null); 
                     setLoanData({ tech: '', supervisor: '', monitor: '' });
+                } catch (err) { console.error(err); }
+            };
+
+            const handleToolReturnSubmit = async (e) => {
+                e.preventDefault();
+                if(!returningTool) return;
+                
+                const { doc, updateDoc, addDoc, collection, serverTimestamp } = window.FirebaseSDK;
+                const dateStr = new Date().toLocaleString().toUpperCase();
+                try {
+                    await updateDoc(doc(dbRef.current, 'artifacts', appId, 'public', 'data', 'tools_inventory', returningTool.docId), {
+                        status: 'DISPONIBLE',
+                        assignedTo: null,
+                        supervisor: null,
+                        monitorTurno: null,
+                        lastMove: dateStr
+                    });
+                    await addDoc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'history'), {
+                        type: 'DEVOLUCION_HERRAMIENTA',
+                        item: (returningTool.name || "S/N").toUpperCase(),
+                        itemId: (returningTool.id || "S/ID").toUpperCase(),
+                        qty: 1,
+                        tech: (returningTool.assignedTo || 'DESCONOCIDO').toUpperCase(),
+                        monitor: returnData.monitor.toUpperCase(),
+                        dateStr: dateStr,
+                        timestamp: serverTimestamp()
+                    });
+                    setReturningTool(null);
+                    setReturnData({ monitor: '' });
                 } catch (err) { console.error(err); }
             };
 
@@ -251,14 +381,9 @@
                 } catch (err) { console.error(err); }
             };
 
-            const updateStock = async (docId, currentStock, mod) => {
-                const { doc, updateDoc } = window.FirebaseSDK;
-                try { await updateDoc(doc(dbRef.current, 'artifacts', appId, 'public', 'data', 'inventory', docId), { stock: Math.max(0, currentStock + mod) }); } catch (err) { console.error(err); }
-            };
-
             const handleBulkExit = async (e) => {
                 e.preventDefault();
-                if (selectedItems.length === 0 || !exitHeader.monitor) return;
+                if (selectedItems.length === 0 || !exitHeader.monitor || !exitHeader.supervisor) return;
                 const { doc, writeBatch, collection, serverTimestamp } = window.FirebaseSDK;
                 const batch = writeBatch(dbRef.current);
                 const dateStr = new Date().toLocaleString().toUpperCase();
@@ -270,9 +395,11 @@
                         batch.set(histColRef, { 
                             type: 'SALIDA', 
                             tech: exitHeader.tech.toUpperCase(), 
+                            supervisor: exitHeader.supervisor.toUpperCase(),
                             monitor: exitHeader.monitor.toUpperCase(), 
                             description: exitHeader.description.toUpperCase(), 
                             item: item.name.toUpperCase(), 
+                            itemId: item.id.toUpperCase(), 
                             qty: item.qty, 
                             dateStr: dateStr, 
                             timestamp: serverTimestamp() 
@@ -280,12 +407,23 @@
                     });
                     await batch.commit(); 
                     setSelectedItems([]); 
-                    setExitHeader({ tech: '', monitor: '', description: '' }); 
+                    setExitHeader({ tech: '', monitor: '', supervisor: '', description: '' }); 
                     setActiveTab('history');
                 } catch (err) { console.error(err); }
             };
 
-            if (loading) return <div className="h-screen flex flex-col items-center justify-center bg-white"><div className="text-blue-600 animate-bounce mb-4"><EnergyLogo className="h-16 w-16" /></div><p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">CARGANDO...</p></div>;
+            // Helpers
+            const addItemToExitList = (item) => { if (selectedItems.find(si => si.id === item.id)) return; setSelectedItems([...selectedItems, { ...item, qty: 1 }]); setCurrentSearch(''); setShowSearchList(false); };
+            const removeSelected = (id) => setSelectedItems(selectedItems.filter(i => i.id !== id));
+            const updateSelectedQty = (id, newQty) => setSelectedItems(selectedItems.map(i => i.id === id ? { ...i, qty: Math.max(1, Number(newQty)) } : i));
+            const handleRestockSubmit = async (e) => { e.preventDefault(); if (!restockItem || !restockQty) return; const { doc, updateDoc, addDoc, collection, serverTimestamp } = window.FirebaseSDK; const qtyNum = Number(restockQty); const dateStr = new Date().toLocaleString().toUpperCase(); try { await updateDoc(doc(dbRef.current, 'artifacts', appId, 'public', 'data', 'inventory', restockItem.docId), { stock: restockItem.stock + qtyNum }); await addDoc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'history'), { type: 'ENTRADA', item: restockItem.name.toUpperCase(), itemId: restockItem.id.toUpperCase(), qty: qtyNum, responsible: restockResp.toUpperCase(), tech: 'ALMACÉN', monitor: restockResp.toUpperCase(), description: 'REPOSICIÓN DE STOCK', dateStr: dateStr, timestamp: serverTimestamp() }); setRestockItem(null); setRestockQty(''); setRestockResp(''); setActiveTab('history'); } catch (err) { console.error(err); } };
+            const updateStock = async (docId, currentStock, mod) => { const { doc, updateDoc } = window.FirebaseSDK; try { await updateDoc(doc(dbRef.current, 'artifacts', appId, 'public', 'data', 'inventory', docId), { stock: Math.max(0, currentStock + mod) }); } catch (err) { console.error(err); } };
+            const handleAddItem = async (e) => { e.preventDefault(); const { collection, addDoc, serverTimestamp } = window.FirebaseSDK; const dateStr = new Date().toLocaleString().toUpperCase(); try { await addDoc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'inventory'), { id: newItem.id.toUpperCase(), name: newItem.name.toUpperCase(), stock: Number(newItem.stock), min: Number(newItem.min), unit: newItem.unit.toUpperCase(), createdAt: serverTimestamp() }); if (Number(newItem.stock) > 0) { await addDoc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'history'), { type: 'ENTRADA', item: newItem.name.toUpperCase(), itemId: newItem.id.toUpperCase(), qty: Number(newItem.stock), responsible: 'ADMINISTRADOR', tech: 'ALMACÉN', monitor: 'CREACIÓN', description: 'INVENTARIO INICIAL', dateStr: dateStr, timestamp: serverTimestamp() }); } setNewItem({ id: '', name: '', stock: '', min: 5, unit: 'PZA' }); setActiveTab('inventory'); } catch (err) { console.error(err); } };
+            const handleAddTool = async (e) => { e.preventDefault(); const { collection, addDoc, serverTimestamp } = window.FirebaseSDK; try { await addDoc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'tools_inventory'), { id: newTool.id.toUpperCase(), name: newTool.name.toUpperCase(), brand: newTool.brand.toUpperCase(), serial: newTool.serial.toUpperCase(), status: 'DISPONIBLE', createdAt: serverTimestamp() }); setNewTool({ id: '', name: '', brand: '', serial: '' }); } catch (err) { console.error(err); } };
+            const deleteTool = async (docId, name) => { if(!confirm(`¿ELIMINAR HERRAMIENTA: ${name}?`)) return; const { doc, deleteDoc } = window.FirebaseSDK; try { await deleteDoc(doc(dbRef.current, 'artifacts', appId, 'public', 'data', 'tools_inventory', docId)); } catch (err) { console.error(err); } };
+            const handleSaveEdit = async (e) => { e.preventDefault(); const { doc, updateDoc } = window.FirebaseSDK; try { await updateDoc(doc(dbRef.current, 'artifacts', appId, 'public', 'data', 'inventory', editingItem.docId), { name: editingItem.name.toUpperCase(), id: editingItem.id.toUpperCase(), min: Number(editingItem.min), unit: editingItem.unit.toUpperCase() }); setEditingItem(null); } catch (err) { console.error(err); } };
+
+            if (loading) return <div className="h-screen flex flex-col items-center justify-center bg-white"><div className="text-blue-600 animate-bounce mb-4"><EnergyLogo className="h-16 w-16" /></div><p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">CONECTANDO...</p></div>;
 
             return (
                 <div className="min-h-screen pb-20 no-print uppercase font-bold text-slate-900">
@@ -295,9 +433,10 @@
                                 <div className="bg-blue-600 text-white p-2 rounded-xl shadow-lg"><EnergyLogo className="h-7 w-7" /></div>
                                 <div>
                                     <div className="flex items-center gap-2"><span className="text-lg font-black tracking-tighter uppercase">Airtek</span><span className="text-[10px] font-black bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded tracking-tighter">ENERGÍA</span></div>
-                                    <p className="text-[9px] font-bold text-slate-400 tracking-widest">SISTEMA DE CONTROL</p>
+                                    <div className="flex items-center gap-1.5 mt-0.5"><span className={`w-1.5 h-1.5 rounded-full ${isCloud ? 'bg-emerald-500 pulse-online' : 'bg-red-500'}`}></span><p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{isCloud ? 'ONLINE' : 'OFFLINE'}</p></div>
                                 </div>
                             </div>
+                            <button onClick={() => setIsAdminMode(!isAdminMode)} className={`text-[9px] px-2 py-1 rounded-full font-black tracking-wider transition-colors ${isAdminMode ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-400'}`}>{isAdminMode ? 'MODO EDITOR' : 'VISTA LECTURA'}</button>
                         </div>
                     </header>
 
@@ -312,41 +451,11 @@
                         </nav>
 
                         <main className="tab-content">
-                            {/* MODAL PRÉSTAMO LLAVE */}
-                            {loaningKey && (
-                                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
-                                    <form onSubmit={handleKeyLoan} className="bg-white w-full max-w-md rounded-[2.5rem] p-8 space-y-4 shadow-2xl">
-                                        <div className="text-center mb-4">
-                                            <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-3"><KeyIcon className="h-6 w-6" /></div>
-                                            <h3 className="text-sm font-black uppercase text-blue-600">ENTREGAR LLAVE DE NODO</h3>
-                                            <p className="text-[11px] font-black text-slate-800 mt-1">{loaningKey.name}</p>
-                                        </div>
-                                        <div className="space-y-4">
-                                            <div>
-                                                <label className="text-[9px] text-slate-400 ml-2 mb-1 block">TÉCNICO QUE RECIBE</label>
-                                                <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[12px] font-black border-2 border-transparent focus:border-blue-500 outline-none" value={loanData.tech} onChange={e=>setLoanData({...loanData, tech: e.target.value})} placeholder="NOMBRE" />
-                                            </div>
-                                            <div>
-                                                <label className="text-[9px] text-slate-400 ml-2 mb-1 block">QUIÉN ENTREGA (MONITOREO)</label>
-                                                <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[12px] font-black border-2 border-transparent focus:border-blue-500 outline-none" value={loanData.monitor} onChange={e=>setLoanData({...loanData, monitor: e.target.value})} placeholder="NOMBRE MONITOREO" />
-                                            </div>
-                                        </div>
-                                        <div className="flex gap-3 pt-6">
-                                            <button type="button" onClick={()=>setLoaningKey(null)} className="flex-1 py-4 text-[10px] text-slate-400 font-black">CANCELAR</button>
-                                            <button type="submit" className="flex-2 bg-blue-600 text-white px-8 py-4 rounded-2xl font-black text-[10px] shadow-lg">CONFIRMAR</button>
-                                        </div>
-                                    </form>
-                                </div>
-                            )}
-
-                            {/* MODAL PRÉSTAMO HERRAMIENTA */}
+                            {/* MODAL DE PRÉSTAMO HERRAMIENTA */}
                             {loaningTool && (
                                 <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
                                     <form onSubmit={handleToolLoan} className="bg-white w-full max-w-md rounded-[2.5rem] p-8 space-y-4 shadow-2xl">
-                                        <div className="text-center mb-4">
-                                            <h3 className="text-sm font-black uppercase text-orange-500">PRESTAR HERRAMIENTA</h3>
-                                            <p className="text-[11px] font-black text-slate-800 mt-1">{loaningTool.name}</p>
-                                        </div>
+                                        <div className="text-center mb-4"><h3 className="text-sm font-black uppercase text-orange-500">PRESTAR HERRAMIENTA</h3><p className="text-[11px] font-black text-slate-800 mt-1">{loaningTool.name}</p></div>
                                         <div className="space-y-4">
                                             <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[12px] font-black border-2 border-transparent focus:border-blue-500 outline-none" value={loanData.tech} onChange={e=>setLoanData({...loanData, tech: e.target.value})} placeholder="TÉCNICO QUE RECIBE" />
                                             <select required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black border-2 border-transparent focus:border-blue-500 outline-none" value={loanData.supervisor} onChange={e=>setLoanData({...loanData, supervisor: e.target.value})}>
@@ -355,21 +464,35 @@
                                             </select>
                                             <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[12px] font-black border-2 border-transparent focus:border-blue-500 outline-none" value={loanData.monitor} onChange={e=>setLoanData({...loanData, monitor: e.target.value})} placeholder="MONITOREO ENTREGA" />
                                         </div>
-                                        <div className="flex gap-3 pt-6">
-                                            <button type="button" onClick={()=>setLoaningTool(null)} className="flex-1 py-4 text-[10px] text-slate-400 font-black">CANCELAR</button>
-                                            <button type="submit" className="flex-2 bg-blue-600 text-white px-8 py-4 rounded-2xl font-black text-[10px] shadow-lg">CONFIRMAR</button>
-                                        </div>
+                                        <div className="flex gap-3 pt-6"><button type="button" onClick={()=>setLoaningTool(null)} className="flex-1 py-4 text-[10px] text-slate-400 font-black">CANCELAR</button><button type="submit" className="flex-2 bg-orange-500 text-white px-8 py-4 rounded-2xl font-black text-[10px] uppercase shadow-lg shadow-orange-200">CONFIRMAR</button></div>
                                     </form>
                                 </div>
                             )}
 
+                            {/* MODAL DE DEVOLUCIÓN DE HERRAMIENTA */}
+                            {returningTool && (
+                                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+                                    <form onSubmit={handleToolReturnSubmit} className="bg-white w-full max-w-md rounded-[2.5rem] p-8 space-y-4 shadow-2xl">
+                                        <div className="text-center mb-4"><h3 className="text-sm font-black uppercase text-emerald-500">DEVOLUCIÓN</h3><p className="text-[11px] font-black text-slate-800 mt-1">{returningTool.name}</p></div>
+                                        <div className="space-y-2">
+                                            <p className="text-[10px] font-black text-slate-400 uppercase text-center">TÉCNICO QUE DEVUELVE: <span className="text-slate-900">{returningTool.assignedTo}</span></p>
+                                            <input required className="w-full p-4 bg-emerald-50 rounded-2xl text-[12px] font-black border-2 border-emerald-100 focus:border-emerald-500 outline-none text-slate-800" value={returnData.monitor} onChange={e=>setReturnData({...returnData, monitor: e.target.value})} placeholder="QUIÉN RECIBE (MONITOR)" />
+                                        </div>
+                                        <div className="flex gap-3 pt-6"><button type="button" onClick={()=>setReturningTool(null)} className="flex-1 py-4 text-[10px] text-slate-400 font-black">CANCELAR</button><button type="submit" className="flex-2 bg-emerald-500 text-white px-8 py-4 rounded-2xl font-black text-[10px] uppercase shadow-lg shadow-emerald-200">CONFIRMAR INGRESO</button></div>
+                                    </form>
+                                </div>
+                            )}
+
+                            {/* ... (Resto de los componentes: Inventory, Tools, Keys, History, Admin) se mantienen con sus modales ... */}
                             {activeTab === 'inventory' && (
                                 <div className="space-y-3">
-                                    <div className="px-4"><h2 className="text-[10px] font-black text-slate-400 tracking-widest uppercase">EXISTENCIAS</h2></div>
+                                    <div className="flex justify-between items-center px-4"><h2 className="text-[10px] font-black text-slate-400 tracking-widest uppercase">EXISTENCIAS</h2></div>
                                     {inventory.map(i => (
-                                        <div key={i.docId} className="bg-white p-5 rounded-[2rem] flex justify-between items-center shadow-sm border border-slate-100">
-                                            <div><div className="font-black text-[13px] text-slate-800">{i.name}</div><div className="text-[9px] text-slate-400 font-mono font-bold">{i.id}</div></div>
-                                            <div className="flex items-center gap-4 bg-slate-50 p-1.5 rounded-2xl">
+                                        <div key={i.docId} className="bg-white p-5 rounded-[2rem] flex flex-col sm:flex-row justify-between items-center shadow-sm border border-slate-100">
+                                            <div className="flex items-center gap-4 w-full sm:w-auto">
+                                                <div className="flex flex-col"><span className="font-black text-[13px] text-slate-800">{i.name}</span><span className="text-[9px] text-slate-400 font-mono font-bold">{i.id}</span></div>
+                                            </div>
+                                            <div className="flex items-center gap-4 bg-slate-50 p-1.5 rounded-2xl mt-3 sm:mt-0">
                                                 <button onClick={() => updateStock(i.docId, i.stock, -1)} className="w-9 h-9 flex items-center justify-center bg-white rounded-xl text-slate-400">-</button>
                                                 <div className="px-4 text-center min-w-[70px]"><div className={`font-black text-lg ${i.stock <= i.min ? 'text-red-500' : 'text-slate-900'}`}>{i.stock}</div><div className="text-[8px] text-slate-300 font-extrabold">{i.unit}</div></div>
                                                 <button onClick={() => updateStock(i.docId, i.stock, 1)} className="w-9 h-9 flex items-center justify-center bg-white rounded-xl text-slate-400">+</button>
@@ -379,6 +502,36 @@
                                 </div>
                             )}
 
+                            {activeTab === 'tools' && (
+                                <div className="space-y-6">
+                                    <div className="flex flex-col gap-4 px-4"><h2 className="text-[10px] font-black text-slate-400 tracking-widest uppercase">LISTADO DE HERRAMIENTAS</h2><div className="relative"><input className="w-full p-4 bg-white rounded-2xl text-[11px] font-black shadow-sm border border-slate-100 outline-none uppercase" value={toolSearch} onChange={e => setToolSearch(e.target.value)} placeholder="BUSCAR POR NOMBRE O CÓDIGO..." /></div></div>
+                                    <div className="space-y-3">{sortedAndFilteredTools.map(t => (
+                                        <div key={t.docId} className={`bg-white p-5 rounded-[2rem] flex flex-col sm:flex-row justify-between items-center shadow-sm border ${t.status === 'PRESTADO' ? 'border-orange-200 bg-orange-50/30' : 'border-slate-100'}`}>
+                                            <div className="flex items-center gap-4"><div className={`p-3 rounded-xl ${t.status === 'PRESTADO' ? 'bg-orange-100 text-orange-500' : 'bg-emerald-100 text-emerald-500'}`}><EnergyLogo className="w-5 h-5" /></div><div className="flex flex-col"><span className="font-black text-[13px] text-slate-800">{t.name}</span><span className="text-[9px] text-slate-400 font-mono">{t.id}</span>{t.status === 'PRESTADO' && <span className="text-[9px] font-black text-orange-500 mt-1">ASIGNADO A: {t.assignedTo}</span>}</div></div>
+                                            <div className="flex items-center gap-2 mt-3 sm:mt-0">{t.status === 'DISPONIBLE' ? <button onClick={() => setLoaningTool(t)} className="px-6 py-3 bg-slate-900 text-white rounded-xl text-[10px] uppercase tracking-widest font-black">PRESTAR</button> : <button onClick={() => setReturningTool(t)} className="px-6 py-3 bg-white border-2 border-orange-500 text-orange-500 rounded-xl text-[10px] uppercase tracking-widest font-black">DEVOLVER</button>}{isAdminMode && <button onClick={() => deleteTool(t.docId, t.name)} className="p-3 bg-red-50 text-red-400 rounded-xl">×</button>}</div>
+                                        </div>
+                                    ))}</div>
+                                    {isAdminMode && (<form onSubmit={handleAddTool} className="bg-white p-8 rounded-[2.5rem] shadow-premium space-y-5"><div className="text-center font-black text-slate-800 text-xs">NUEVA HERRAMIENTA</div><input required placeholder="CÓDIGO" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none" value={newTool.id} onChange={e=>setNewTool({...newTool, id: e.target.value.toUpperCase()})} /><input required placeholder="NOMBRE" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none" value={newTool.name} onChange={e=>setNewTool({...newTool, name: e.target.value.toUpperCase()})} /><button className="w-full bg-slate-900 text-white p-5 rounded-3xl font-black uppercase text-[11px]">REGISTRAR</button></form>)}
+                                </div>
+                            )}
+
+                            {activeTab === 'exit' && (
+                                <form onSubmit={handleBulkExit} className="bg-white p-8 rounded-[2.5rem] shadow-premium border border-slate-100 space-y-6">
+                                    <div className="text-center uppercase"><h3 className="text-sm font-black text-slate-800">CARGA DE DESPACHO</h3></div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div className="space-y-1"><label className="text-[8px] text-slate-400 ml-2 uppercase font-black">TÉCNICO RESPONSABLE</label><input required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none border-2 border-transparent focus:border-blue-100" value={exitHeader.tech} onChange={e=>setExitHeader({...exitHeader, tech: e.target.value.toUpperCase()})} placeholder="NOMBRE" /></div>
+                                        <div className="space-y-1"><label className="text-[8px] text-slate-400 ml-2 uppercase font-black">TURNO MONITOREO</label><input required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none border-2 border-transparent focus:border-blue-100" value={exitHeader.monitor} onChange={e=>setExitHeader({...exitHeader, monitor: e.target.value.toUpperCase()})} placeholder="QUIÉN DESPACHA" /></div>
+                                    </div>
+                                    <div className="space-y-1"><label className="text-[8px] text-slate-400 ml-2 uppercase font-black">SUPERVISOR AUTORIZA</label><select required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black border-2 border-transparent outline-none focus:border-blue-100 appearance-none" value={exitHeader.supervisor} onChange={e=>setExitHeader({...exitHeader, supervisor: e.target.value})}><option value="">SELECCIONAR...</option>{listaSupervisores.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
+                                    <div className="relative"><label className="text-[8px] text-slate-400 ml-2 uppercase font-black">BUSCAR MATERIAL</label><input className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none" value={currentSearch} onFocus={() => setShowSearchList(true)} onChange={e => {setCurrentSearch(e.target.value); setShowSearchList(true);}} placeholder="ESCRIBA PARA BUSCAR..." />{showSearchList && (<div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-2xl border z-50 overflow-hidden">{filteredInventorySearch.filter(i => (i.name || "").toLowerCase().includes(currentSearch.toLowerCase())).slice(0, 5).map(i => (<div key={i.id} onClick={() => addItemToExitList(i)} className="p-4 hover:bg-blue-50 cursor-pointer flex justify-between items-center border-b last:border-0"><div className="text-[11px] font-black">{i.name}</div><div className="text-[10px] text-blue-600">EN STOCK: {i.stock}</div></div>))}</div>)}</div>
+                                    <div className="space-y-2">{selectedItems.map(item => (<div key={item.id} className="bg-slate-50 p-4 rounded-2xl flex items-center justify-between"><div className="text-[11px] font-black truncate max-w-[150px]">{item.name}</div><div className="flex items-center gap-2"><input type="number" className="w-16 p-2 bg-white rounded-xl text-[11px] font-black text-center" value={item.qty} onChange={e => updateSelectedQty(item.id, e.target.value)} min="1" /><button type="button" onClick={() => setSelectedItems(selectedItems.filter(si => si.id !== item.id))} className="text-red-400 px-2 font-black">×</button></div></div>))}</div>
+                                    <div className="space-y-1"><label className="text-[8px] text-slate-400 ml-2 uppercase font-black">NODO / OBSERVACIÓN</label><input required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none" value={exitHeader.description} onChange={e=>setExitHeader({...exitHeader, description: e.target.value.toUpperCase()})} placeholder="DETALLES DE SALIDA" /></div>
+                                    <button disabled={selectedItems.length === 0} className="w-full bg-blue-600 disabled:bg-slate-200 text-white p-5 rounded-3xl font-black text-[11px]">GENERAR DESPACHO</button>
+                                </form>
+                            )}
+
+                            {/* Reuse existing history, admin, keys tabs logic here (same as previous) */}
+                            {/* ... Keys Tab ... */}
                             {activeTab === 'keys' && (
                                 <div className="space-y-3">
                                     <div className="px-4"><h2 className="text-[10px] font-black text-slate-400 tracking-widest uppercase">LLAVES DE NODOS</h2></div>
@@ -386,7 +539,7 @@
                                         {keys.sort((a,b)=>a.name.localeCompare(b.name)).map(k => (
                                             <div key={k.docId} className={`bg-white p-5 rounded-[2rem] shadow-sm border flex flex-col sm:flex-row justify-between items-center gap-4 ${k.status === 'PRESTADO' ? 'border-blue-200 bg-blue-50/20' : 'border-slate-100'}`}>
                                                 <div className="flex items-center gap-4 w-full">
-                                                    <div className={`p-4 rounded-2xl ${k.status === 'PRESTADO' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}><KeyIcon /></div>
+                                                    <div className={`p-4 rounded-2xl ${k.status === 'PRESTADO' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}><svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3m-3-3l-2.5-2.5" /></svg></div>
                                                     <div>
                                                         <div className="text-[13px] font-black">{k.name}</div>
                                                         {k.status === 'PRESTADO' ? (
@@ -411,66 +564,84 @@
                                     </div>
                                 </div>
                             )}
-
-                            {activeTab === 'tools' && (
-                                <div className="space-y-3">
-                                    <div className="px-4"><h2 className="text-[10px] font-black text-slate-400 tracking-widest uppercase">EQUIPOS Y HERRAMIENTAS</h2></div>
-                                    {tools.map(t => (
-                                        <div key={t.docId} className="bg-white p-5 rounded-[2rem] flex justify-between items-center shadow-sm border border-slate-100">
-                                            <div><div className="font-black text-[13px] text-slate-800">{t.name}</div><div className="text-[9px] text-slate-400">{t.status} - {t.assignedTo || 'EN ALMACEN'}</div></div>
-                                            <button onClick={() => t.status === 'DISPONIBLE' ? setLoaningTool(t) : null} className={`px-4 py-2 rounded-xl text-[10px] ${t.status === 'DISPONIBLE' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-300'}`}>
-                                                {t.status === 'DISPONIBLE' ? 'PRESTAR' : 'OCUPADO'}
-                                            </button>
+                            
+                            {/* ... Keys Modal ... */}
+                            {loaningKey && (
+                                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+                                    <form onSubmit={handleKeyLoan} className="bg-white w-full max-w-md rounded-[2.5rem] p-8 space-y-4 shadow-2xl">
+                                        <div className="text-center mb-4"><h3 className="text-sm font-black uppercase text-blue-600">ENTREGAR LLAVE DE NODO</h3><p className="text-[11px] font-black text-slate-800 mt-1">{loaningKey.name}</p></div>
+                                        <div className="space-y-4">
+                                            <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[12px] font-black border-2 border-transparent focus:border-blue-500 outline-none" value={loanData.tech} onChange={e=>setLoanData({...loanData, tech: e.target.value})} placeholder="TÉCNICO QUE RECIBE" />
+                                            <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[12px] font-black border-2 border-transparent focus:border-blue-500 outline-none" value={loanData.monitor} onChange={e=>setLoanData({...loanData, monitor: e.target.value})} placeholder="NOMBRE MONITOREO" />
                                         </div>
-                                    ))}
+                                        <div className="flex gap-3 pt-6"><button type="button" onClick={()=>setLoaningKey(null)} className="flex-1 py-4 text-[10px] text-slate-400 font-black">CANCELAR</button><button type="submit" className="flex-2 bg-blue-600 text-white px-8 py-4 rounded-2xl font-black text-[10px] shadow-lg">CONFIRMAR</button></div>
+                                    </form>
                                 </div>
                             )}
 
                             {activeTab === 'history' && (
-                                <div className="space-y-3">
-                                    <div className="px-4 flex justify-between items-center"><h2 className="text-[10px] font-black text-slate-400 tracking-widest uppercase">BITÁCORA</h2></div>
-                                    {history.map(h => {
-                                        const type = h.type || 'MOVIMIENTO';
-                                        const isEntry = type.includes('ENTRADA') || type.includes('DEVOLUCION');
-                                        return (
-                                            <div key={h.id} className={`bg-white p-5 rounded-[2.2rem] shadow-sm border-l-4 ${isEntry ? 'border-l-emerald-500' : 'border-l-blue-500'} flex justify-between items-center`}>
-                                                <div>
-                                                    <div className="text-[11px] font-black">{(h.item || "MATERIAL").toUpperCase()}</div>
-                                                    <div className="text-[8px] text-slate-400 mt-1 uppercase">RESP: {h.tech || h.responsible} | MONITOREO: {h.monitor || 'N/A'}</div>
-                                                    <div className="text-[8px] text-slate-300 font-bold mt-1">{(h.dateStr || "---")}</div>
-                                                </div>
-                                                <div className={`font-black text-sm ${isEntry ? 'text-emerald-500' : 'text-blue-500'}`}>{isEntry ? '+' : '-'}{h.qty}</div>
-                                            </div>
-                                        );
-                                    })}
+                                <div className="space-y-4">
+                                    <div className="bg-white p-6 rounded-[2.5rem] shadow-sm flex flex-col sm:flex-row gap-4 border border-slate-100">
+                                        <div className="flex-1 space-y-1">
+                                            <label className="text-[9px] font-black text-blue-600 uppercase ml-2 tracking-widest">FILTRO POR MATERIAL</label>
+                                            <select 
+                                                className="w-full p-3 bg-slate-50 rounded-xl text-[10px] font-black border-none outline-none appearance-none uppercase"
+                                                value={filterItemId}
+                                                onChange={e => setFilterItemId(e.target.value)}
+                                            >
+                                                <option value="all">TODOS LOS MOVIMIENTOS</option>
+                                                {inventory.map(i => <option key={i.id} value={i.id}>{i.name.toUpperCase()}</option>)}
+                                            </select>
+                                        </div>
+                                        <div className="flex items-end">
+                                            <button 
+                                                onClick={() => exportHistoryPDF(historyToShow, filterItemId === 'all' ? 'COMPLETA' : `DE ${filterItemId}`)} 
+                                                className="bg-slate-900 text-white px-6 py-3 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-slate-800 transition-colors"
+                                            >
+                                                EXPORTAR PDF
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                        {historyToShow.length === 0 ? (
+                                            <div className="py-20 text-center text-slate-300 font-bold italic text-xs uppercase tracking-widest">Sin registros encontrados</div>
+                                        ) : (
+                                            historyToShow.map(h => {
+                                                const type = h.type || 'MOVIMIENTO';
+                                                const isEntry = type.includes('ENTRADA') || type.includes('DEVOLUCION');
+                                                const colorClass = isEntry ? 'emerald' : (type.includes('PRESTAMO') ? 'orange' : 'red');
+                                                
+                                                return (
+                                                    <div key={h.id} className={`bg-white p-5 rounded-[2.2rem] flex flex-col sm:flex-row justify-between items-center shadow-sm border-l-4 border-l-${colorClass}-500 gap-3`}>
+                                                        <div className="w-full">
+                                                            <div className="font-black text-[12px] text-slate-800 uppercase">{(h.item || "ÍTEM SIN NOMBRE")}</div>
+                                                            <div className="text-[8px] font-black text-slate-400 uppercase mt-1">
+                                                                TIPO: {type.replace(/_/g,' ')} | RESP: <span className="text-slate-900">{(h.tech || h.responsible || "ALMACÉN").toUpperCase()}</span>
+                                                            </div>
+                                                            {h.supervisor && <div className="text-[8px] font-black text-orange-600 mt-1 uppercase">AUTORIZÓ: {h.supervisor}</div>}
+                                                            <div className="text-[8px] font-black text-blue-700 mt-0.5 uppercase">ENTREGÓ (TURNO): {(h.monitor || "N/A").toUpperCase()}</div>
+                                                        </div>
+                                                        <div className={`text-center sm:text-right shrink-0 px-4 py-2 rounded-2xl bg-${colorClass}-50`}>
+                                                            <div className={`text-${colorClass}-600 font-black text-sm italic`}>
+                                                                {isEntry ? '+' : '-'}{h.qty || 0}
+                                                            </div>
+                                                            <div className="text-[8px] text-slate-400 font-black mt-0.5">{(h.dateStr || "FECHA DESCONOCIDA")}</div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })
+                                        )}
+                                    </div>
                                 </div>
                             )}
 
-                            {activeTab === 'exit' && (
-                                <form onSubmit={handleBulkExit} className="bg-white p-8 rounded-[2.5rem] shadow-premium space-y-6">
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none" value={exitHeader.tech} onChange={e=>setExitHeader({...exitHeader, tech: e.target.value.toUpperCase()})} placeholder="TÉCNICO" />
-                                        <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none" value={exitHeader.monitor} onChange={e=>setExitHeader({...exitHeader, monitor: e.target.value.toUpperCase()})} placeholder="MONITOREO" />
-                                    </div>
-                                    <input className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none" value={currentSearch} onChange={e => setCurrentSearch(e.target.value)} placeholder="BUSCAR MATERIAL..." />
-                                    <div className="max-h-40 overflow-y-auto space-y-1">
-                                        {inventory.filter(i => i.name.toLowerCase().includes(currentSearch.toLowerCase())).slice(0,4).map(i => (
-                                            <div key={i.docId} onClick={() => !selectedItems.find(s=>s.docId===i.docId) && setSelectedItems([...selectedItems, {...i, qty:1}])} className="p-3 bg-slate-50 rounded-xl text-[10px] font-black cursor-pointer hover:bg-blue-50">
-                                                {i.name} (STOCK: {i.stock})
-                                            </div>
-                                        ))}
-                                    </div>
-                                    <div className="space-y-2">
-                                        {selectedItems.map(si => (
-                                            <div key={si.docId} className="flex justify-between items-center bg-blue-50 p-3 rounded-xl">
-                                                <span className="text-[10px] font-black">{si.name}</span>
-                                                <input type="number" className="w-16 p-1 bg-white rounded text-center font-black" value={si.qty} onChange={e=>setSelectedItems(selectedItems.map(x=>x.docId===si.docId?{...x, qty:Number(e.target.value)}:x))} />
-                                            </div>
-                                        ))}
-                                    </div>
-                                    <button className="w-full bg-blue-600 text-white p-5 rounded-3xl font-black text-[11px]">GENERAR SALIDA</button>
-                                </form>
-                            )}
+                            {/* ... Rest of modals (Restock, Edit, Admin) ... */}
+                            {/* Copy logic from previous response for these modals if needed */}
+                            {activeTab === 'admin' && (<form onSubmit={handleAddItem} className="bg-white p-8 rounded-[2.5rem] shadow-premium space-y-5"><div className="text-center font-black text-slate-800 text-xs">MAESTRO DE MATERIALES</div><div className="grid grid-cols-1 md:grid-cols-2 gap-4"><input required placeholder="CÓDIGO" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none" value={newItem.id} onChange={e=>setNewItem({...newItem, id: e.target.value.toUpperCase()})} /><input required placeholder="DESCRIPCIÓN" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none" value={newItem.name} onChange={e=>setNewItem({...newItem, name: e.target.value.toUpperCase()})} /><input required type="number" placeholder="STOCK" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none" value={newItem.stock} onChange={e=>setNewItem({...newItem, stock: e.target.value})} /><input required placeholder="UNIDAD (PZA, MTS)" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none" value={newItem.unit} onChange={e=>setNewItem({...newItem, unit: e.target.value.toUpperCase()})} /></div><button className="w-full bg-slate-900 text-white p-5 rounded-3xl font-black uppercase text-[11px] tracking-widest">GUARDAR</button></form>)}
+                            
+                            {restockItem && (<div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4"><form onSubmit={handleRestockSubmit} className="bg-white w-full max-w-md rounded-[2.5rem] p-8 space-y-4"><div className="text-center font-black text-emerald-600 text-xs">REPONER: {restockItem.name}</div><input required type="number" min="1" className="w-full p-4 bg-emerald-50 rounded-2xl text-[14px] font-black text-center outline-none" value={restockQty} onChange={e=>setRestockQty(e.target.value)} placeholder="CANTIDAD" /><input required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none" value={restockResp} onChange={e=>setRestockResp(e.target.value)} placeholder="RESPONSABLE" /><div className="flex gap-3 pt-4"><button type="button" onClick={()=>{setRestockItem(null); setRestockQty('');}} className="flex-1 text-[10px]">CANCELAR</button><button type="submit" className="flex-2 bg-emerald-500 text-white px-8 py-4 rounded-2xl font-black text-[10px]">REPOSICIÓN</button></div></form></div>)}
+                            {editingItem && (<div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4"><form onSubmit={handleSaveEdit} className="bg-white w-full max-w-md rounded-[2.5rem] p-8 space-y-4 shadow-2xl"><div className="text-center font-black text-xs">EDITAR MATERIAL</div><input required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold outline-none uppercase" value={editingItem.name} onChange={e=>setEditingItem({...editingItem, name: e.target.value.toUpperCase()})} /><div className="grid grid-cols-2 gap-4"><input required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold outline-none uppercase" value={editingItem.id} onChange={e=>setEditingItem({...editingItem, id: e.target.value.toUpperCase()})} /><input required type="number" className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-bold outline-none" value={editingItem.min} onChange={e=>setEditingItem({...editingItem, min: e.target.value})} /></div><div className="flex gap-3 pt-4"><button type="button" onClick={()=>setEditingItem(null)} className="flex-1 text-[10px]">CANCELAR</button><button type="submit" className="flex-2 bg-blue-600 text-white px-8 py-4 rounded-2xl font-black text-[10px]">ACTUALIZAR</button></div></form></div>)}
                         </main>
                     </div>
                 </div>
@@ -482,4 +653,5 @@
     </script>
 </body>
 </html>
+
 
