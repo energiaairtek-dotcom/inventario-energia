@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Airtek - Gestión de Herramientas y Consumibles</title>
+    <title>Airtek - Gestión Integral de Almacén y Llaves</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -48,7 +48,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, updateDoc, deleteDoc, collection, query, onSnapshot, addDoc, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, updateDoc, deleteDoc, collection, query, onSnapshot, addDoc, serverTimestamp, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         const myConfig = {
             apiKey: "AIzaSyDwaK4Z26RfqDwNvwdMqri08oEjwG9qymc",
@@ -64,7 +64,7 @@
         window.FirebaseSDK = {
             initializeApp, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken,
             getFirestore, doc, setDoc, updateDoc, deleteDoc, collection, 
-            query, onSnapshot, addDoc, serverTimestamp, writeBatch
+            query, onSnapshot, addDoc, serverTimestamp, writeBatch, getDoc
         };
         window.dispatchEvent(new Event('firebase-ready'));
     </script>
@@ -78,43 +78,66 @@
             </svg>
         );
 
+        const KeyIcon = ({ className = "h-5 w-5" }) => (
+            <svg viewBox="0 0 24 24" fill="none" className={className} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3m-3-3l-2.5-2.5" />
+            </svg>
+        );
+
         const App = () => {
             const [user, setUser] = useState(null);
             const [loading, setLoading] = useState(true);
             const [inventory, setInventory] = useState([]);
             const [history, setHistory] = useState([]);
             const [tools, setTools] = useState([]);
+            const [keys, setKeys] = useState([]);
             const [activeTab, setActiveTab] = useState('inventory');
             const [exitHeader, setExitHeader] = useState({ tech: '', monitor: '', description: '' });
             const [currentSearch, setCurrentSearch] = useState('');
-            const [toolSearch, setToolSearch] = useState('');
-            const [showSearchList, setShowSearchList] = useState(false);
             const [selectedItems, setSelectedItems] = useState([]); 
             const [loaningTool, setLoaningTool] = useState(null);
+            const [loaningKey, setLoaningKey] = useState(null);
             const [loanData, setLoanData] = useState({ tech: '', supervisor: '', monitor: '' });
             const [isAdminMode, setIsAdminMode] = useState(false);
 
             const dbRef = useRef(null);
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'airtek-energia-v1';
             
-            // Supervisores definidos por el usuario
             const listaSupervisores = ["LUIS RAMOS", "DIEGO CHACÍN", "GUSTAVO RINCÓN"];
+            const listadoNodos = ["COMEDOR", "LAGO CARIBE", "SANTA CRUZ", "POMONA", "TUNAS", "SAN RAFAEL", "MENE GRANDE", "LABORATORIO"];
 
             useEffect(() => {
                 const init = async () => {
                     if (!window.FirebaseSDK) return;
-                    const { initializeApp, getAuth, getFirestore, signInAnonymously, onAuthStateChanged, signInWithCustomToken } = window.FirebaseSDK;
+                    const { initializeApp, getAuth, getFirestore, signInAnonymously, onAuthStateChanged, signInWithCustomToken, doc, getDoc, setDoc, collection } = window.FirebaseSDK;
                     try {
                         const configStr = typeof __firebase_config !== 'undefined' ? __firebase_config : window.__firebase_config_manual;
                         const config = JSON.parse(configStr);
                         const app = initializeApp(config);
                         dbRef.current = getFirestore(app);
                         const auth = getAuth(app);
+                        
                         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                             await signInWithCustomToken(auth, __initial_auth_token);
                         } else {
                             await signInAnonymously(auth);
                         }
+
+                        // Inicializar llaves si no existen
+                        for (const nodo of listadoNodos) {
+                            const keyDocRef = doc(dbRef.current, 'artifacts', appId, 'public', 'data', 'keys_inventory', nodo);
+                            const snap = await getDoc(keyDocRef);
+                            if (!snap.exists()) {
+                                await setDoc(keyDocRef, {
+                                    name: nodo,
+                                    status: 'DISPONIBLE',
+                                    assignedTo: '',
+                                    monitorTurno: '',
+                                    lastMove: ''
+                                });
+                            }
+                        }
+
                         const unsubscribe = onAuthStateChanged(auth, (u) => {
                             if (u) setUser(u);
                             setLoading(false);
@@ -130,34 +153,25 @@
             useEffect(() => {
                 if (!user || !dbRef.current) return;
                 const { collection, onSnapshot } = window.FirebaseSDK;
-                const invPath = collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'inventory');
-                const histPath = collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'history');
-                const toolsPath = collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'tools_inventory');
                 
-                const unsubInv = onSnapshot(invPath, (snap) => setInventory(snap.docs.map(d => ({ ...d.data(), docId: d.id }))), (err) => console.error("Error inventario:", err));
+                const unsubInv = onSnapshot(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'inventory'), 
+                    (snap) => setInventory(snap.docs.map(d => ({ ...d.data(), docId: d.id }))));
                 
-                // Corrección: onSnapshot con manejador de errores para evitar pantalla en blanco si falla la lectura
-                const unsubHist = onSnapshot(histPath, (snap) => {
-                    const data = snap.docs.map(d => ({ ...d.data(), id: d.id }));
-                    // Ordenar por timestamp de forma segura
-                    data.sort((a,b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
-                    setHistory(data);
-                }, (err) => console.error("Error historial:", err));
+                const unsubHist = onSnapshot(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'history'), 
+                    (snap) => {
+                        const data = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+                        data.sort((a,b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+                        setHistory(data);
+                    });
                 
-                const unsubTools = onSnapshot(toolsPath, (snap) => setTools(snap.docs.map(d => ({ ...d.data(), docId: d.id }))), (err) => console.error("Error herramientas:", err));
-                
-                return () => { unsubInv(); unsubHist(); unsubTools(); };
-            }, [user, appId]);
+                const unsubTools = onSnapshot(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'tools_inventory'), 
+                    (snap) => setTools(snap.docs.map(d => ({ ...d.data(), docId: d.id }))));
 
-            const sortedAndFilteredTools = useMemo(() => {
-                let list = [...tools];
-                list.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-                if (toolSearch) {
-                    const search = toolSearch.toLowerCase();
-                    list = list.filter(t => (t.name || "").toLowerCase().includes(search) || (t.id || "").toLowerCase().includes(search));
-                }
-                return list;
-            }, [tools, toolSearch]);
+                const unsubKeys = onSnapshot(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'keys_inventory'), 
+                    (snap) => setKeys(snap.docs.map(d => ({ ...d.data(), docId: d.id }))));
+                
+                return () => { unsubInv(); unsubHist(); unsubTools(); unsubKeys(); };
+            }, [user, appId]);
 
             const handleToolLoan = async (e) => {
                 e.preventDefault();
@@ -188,54 +202,53 @@
                 } catch (err) { console.error(err); }
             };
 
-            const handleToolReturn = async (tool) => {
-                if(!confirm(`¿CONFIRMAS LA DEVOLUCIÓN DE: ${tool.name}?`)) return;
+            const handleKeyLoan = async (e) => {
+                e.preventDefault();
+                if (!loaningKey) return;
                 const { doc, updateDoc, addDoc, collection, serverTimestamp } = window.FirebaseSDK;
                 const dateStr = new Date().toLocaleString().toUpperCase();
                 try {
-                    await updateDoc(doc(dbRef.current, 'artifacts', appId, 'public', 'data', 'tools_inventory', tool.docId), {
-                        status: 'DISPONIBLE',
-                        assignedTo: null,
-                        supervisor: null,
-                        monitorTurno: null,
+                    await updateDoc(doc(dbRef.current, 'artifacts', appId, 'public', 'data', 'keys_inventory', loaningKey.docId), {
+                        status: 'PRESTADO',
+                        assignedTo: loanData.tech.toUpperCase(),
+                        monitorTurno: loanData.monitor.toUpperCase(),
                         lastMove: dateStr
                     });
                     await addDoc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'history'), {
-                        type: 'DEVOLUCION_HERRAMIENTA',
-                        item: (tool.name || "S/N").toUpperCase(),
-                        itemId: (tool.id || "S/ID").toUpperCase(),
+                        type: 'PRESTAMO_LLAVE',
+                        item: `LLAVE NODO: ${loaningKey.name}`.toUpperCase(),
                         qty: 1,
-                        tech: (tool.assignedTo || 'DESCONOCIDO').toUpperCase(),
+                        tech: loanData.tech.toUpperCase(),
+                        monitor: loanData.monitor.toUpperCase(), 
+                        dateStr: dateStr,
+                        timestamp: serverTimestamp()
+                    });
+                    setLoaningKey(null); 
+                    setLoanData({ tech: '', supervisor: '', monitor: '' });
+                } catch (err) { console.error(err); }
+            };
+
+            const handleReturnKey = async (key) => {
+                if(!confirm(`¿CONFIRMAS LA DEVOLUCIÓN DE LA LLAVE: ${key.name}?`)) return;
+                const { doc, updateDoc, addDoc, collection, serverTimestamp } = window.FirebaseSDK;
+                const dateStr = new Date().toLocaleString().toUpperCase();
+                try {
+                    await updateDoc(doc(dbRef.current, 'artifacts', appId, 'public', 'data', 'keys_inventory', key.docId), {
+                        status: 'DISPONIBLE',
+                        assignedTo: '',
+                        monitorTurno: '',
+                        lastMove: dateStr
+                    });
+                    await addDoc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'history'), {
+                        type: 'DEVOLUCION_LLAVE',
+                        item: `LLAVE NODO: ${key.name}`.toUpperCase(),
+                        qty: 1,
+                        tech: (key.assignedTo || 'DESCONOCIDO').toUpperCase(),
                         monitor: 'ALMACÉN',
                         dateStr: dateStr,
                         timestamp: serverTimestamp()
                     });
                 } catch (err) { console.error(err); }
-            };
-
-            const exportHistoryPDF = (filteredData = history, titleSuffix = "COMPLETA") => {
-                const { jsPDF } = window.jspdf;
-                const doc = new jsPDF();
-                doc.setFontSize(16);
-                doc.text(`AIRTEK ENERGÍA - BITÁCORA ${titleSuffix}`, 14, 20);
-                
-                const tableData = filteredData.map(h => [
-                    (h.dateStr || "---").toUpperCase(), 
-                    (h.item || "---").toUpperCase(), 
-                    (h.type === 'ENTRADA' || h.type === 'DEVOLUCION_HERRAMIENTA') ? `+${h.qty}` : `-${h.qty}`,
-                    String(h.tech || h.responsible || '---').toUpperCase(),
-                    h.type === 'PRESTAMO_HERRAMIENTA' ? String(h.supervisor || '---').toUpperCase() : '---',
-                    String(h.monitor || '---').toUpperCase()
-                ]);
-
-                doc.autoTable({ 
-                    startY: 35, 
-                    head: [['FECHA', 'ARTÍCULO', 'CANT', 'RESPONSABLE', 'SUPERVISOR', 'ENTREGA (MONITOREO)']], 
-                    body: tableData, 
-                    headStyles: { fillColor: [37, 99, 235] },
-                    styles: { fontSize: 7 }
-                });
-                doc.save(`BITACORA_${titleSuffix}.pdf`);
             };
 
             const updateStock = async (docId, currentStock, mod) => {
@@ -260,7 +273,6 @@
                             monitor: exitHeader.monitor.toUpperCase(), 
                             description: exitHeader.description.toUpperCase(), 
                             item: item.name.toUpperCase(), 
-                            itemId: item.id.toUpperCase(), 
                             qty: item.qty, 
                             dateStr: dateStr, 
                             timestamp: serverTimestamp() 
@@ -273,13 +285,6 @@
                 } catch (err) { console.error(err); }
             };
 
-            const addItemToExitList = (item) => {
-                if (selectedItems.find(si => si.id === item.id)) return;
-                setSelectedItems([...selectedItems, { ...item, qty: 1 }]);
-                setCurrentSearch('');
-                setShowSearchList(false);
-            };
-
             if (loading) return <div className="h-screen flex flex-col items-center justify-center bg-white"><div className="text-blue-600 animate-bounce mb-4"><EnergyLogo className="h-16 w-16" /></div><p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">CARGANDO...</p></div>;
 
             return (
@@ -290,10 +295,9 @@
                                 <div className="bg-blue-600 text-white p-2 rounded-xl shadow-lg"><EnergyLogo className="h-7 w-7" /></div>
                                 <div>
                                     <div className="flex items-center gap-2"><span className="text-lg font-black tracking-tighter uppercase">Airtek</span><span className="text-[10px] font-black bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded tracking-tighter">ENERGÍA</span></div>
-                                    <div className="flex items-center gap-1.5 mt-0.5"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span><p className="text-[9px] font-bold text-slate-400 tracking-widest">SISTEMA ACTIVO</p></div>
+                                    <p className="text-[9px] font-bold text-slate-400 tracking-widest">SISTEMA DE CONTROL</p>
                                 </div>
                             </div>
-                            <button onClick={() => setIsAdminMode(!isAdminMode)} className={`text-[9px] px-2 py-1 rounded-full font-black tracking-wider transition-colors ${isAdminMode ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-400'}`}>{isAdminMode ? 'MODO EDITOR' : 'VISTA LECTURA'}</button>
                         </div>
                     </header>
 
@@ -301,14 +305,41 @@
                         <nav className="flex gap-1.5 bg-white p-1.5 rounded-3xl shadow-premium border border-slate-100 overflow-x-auto no-scrollbar">
                             {[
                                 {id: 'inventory', label: 'MATERIALES'}, {id: 'exit', label: 'DESPACHO'}, 
-                                {id: 'tools', label: 'HERRAMIENTAS'}, {id: 'history', label: 'BITÁCORA'}
+                                {id: 'tools', label: 'HERRAMIENTAS'}, {id: 'keys', label: 'LLAVES'}, {id: 'history', label: 'BITÁCORA'}
                             ].map(t => (
-                                <button key={t.id} onClick={() => setActiveTab(t.id)} className={`flex-1 min-w-[90px] py-3 rounded-2xl font-black text-[10px] tracking-wider transition-all ${activeTab === t.id ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-blue-50'}`}>{t.label}</button>
+                                <button key={t.id} onClick={() => setActiveTab(t.id)} className={`flex-1 min-w-[95px] py-3 rounded-2xl font-black text-[10px] tracking-wider transition-all ${activeTab === t.id ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-blue-50'}`}>{t.label}</button>
                             ))}
                         </nav>
 
                         <main className="tab-content">
-                            {/* MODAL DE PRÉSTAMO DE HERRAMIENTAS */}
+                            {/* MODAL PRÉSTAMO LLAVE */}
+                            {loaningKey && (
+                                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+                                    <form onSubmit={handleKeyLoan} className="bg-white w-full max-w-md rounded-[2.5rem] p-8 space-y-4 shadow-2xl">
+                                        <div className="text-center mb-4">
+                                            <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-3"><KeyIcon className="h-6 w-6" /></div>
+                                            <h3 className="text-sm font-black uppercase text-blue-600">ENTREGAR LLAVE DE NODO</h3>
+                                            <p className="text-[11px] font-black text-slate-800 mt-1">{loaningKey.name}</p>
+                                        </div>
+                                        <div className="space-y-4">
+                                            <div>
+                                                <label className="text-[9px] text-slate-400 ml-2 mb-1 block">TÉCNICO QUE RECIBE</label>
+                                                <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[12px] font-black border-2 border-transparent focus:border-blue-500 outline-none" value={loanData.tech} onChange={e=>setLoanData({...loanData, tech: e.target.value})} placeholder="NOMBRE" />
+                                            </div>
+                                            <div>
+                                                <label className="text-[9px] text-slate-400 ml-2 mb-1 block">QUIÉN ENTREGA (MONITOREO)</label>
+                                                <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[12px] font-black border-2 border-transparent focus:border-blue-500 outline-none" value={loanData.monitor} onChange={e=>setLoanData({...loanData, monitor: e.target.value})} placeholder="NOMBRE MONITOREO" />
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-3 pt-6">
+                                            <button type="button" onClick={()=>setLoaningKey(null)} className="flex-1 py-4 text-[10px] text-slate-400 font-black">CANCELAR</button>
+                                            <button type="submit" className="flex-2 bg-blue-600 text-white px-8 py-4 rounded-2xl font-black text-[10px] shadow-lg">CONFIRMAR</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            )}
+
+                            {/* MODAL PRÉSTAMO HERRAMIENTA */}
                             {loaningTool && (
                                 <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
                                     <form onSubmit={handleToolLoan} className="bg-white w-full max-w-md rounded-[2.5rem] p-8 space-y-4 shadow-2xl">
@@ -316,30 +347,17 @@
                                             <h3 className="text-sm font-black uppercase text-orange-500">PRESTAR HERRAMIENTA</h3>
                                             <p className="text-[11px] font-black text-slate-800 mt-1">{loaningTool.name}</p>
                                         </div>
-                                        
                                         <div className="space-y-4">
-                                            <div>
-                                                <label className="text-[9px] text-slate-400 ml-2 mb-1 block">TÉCNICO QUE RECIBE</label>
-                                                <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[12px] font-black border-2 border-transparent focus:border-blue-500 outline-none" value={loanData.tech} onChange={e=>setLoanData({...loanData, tech: e.target.value})} placeholder="NOMBRE DEL TÉCNICO" />
-                                            </div>
-
-                                            <div>
-                                                <label className="text-[9px] text-slate-400 ml-2 mb-1 block">SUPERVISOR QUE AUTORIZA</label>
-                                                <select required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black border-2 border-transparent outline-none focus:border-blue-500" value={loanData.supervisor} onChange={e=>setLoanData({...loanData, supervisor: e.target.value})}>
-                                                    <option value="">SELECCIONE SUPERVISOR...</option>
-                                                    {listaSupervisores.map(s => <option key={s} value={s}>{s}</option>)}
-                                                </select>
-                                            </div>
-
-                                            <div>
-                                                <label className="text-[9px] text-slate-400 ml-2 mb-1 block">QUIÉN ENTREGA (MONITOREO)</label>
-                                                <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[12px] font-black border-2 border-transparent focus:border-blue-500 outline-none" value={loanData.monitor} onChange={e=>setLoanData({...loanData, monitor: e.target.value})} placeholder="ESCRIBIR NOMBRE DE MONITOREO" />
-                                            </div>
+                                            <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[12px] font-black border-2 border-transparent focus:border-blue-500 outline-none" value={loanData.tech} onChange={e=>setLoanData({...loanData, tech: e.target.value})} placeholder="TÉCNICO QUE RECIBE" />
+                                            <select required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black border-2 border-transparent focus:border-blue-500 outline-none" value={loanData.supervisor} onChange={e=>setLoanData({...loanData, supervisor: e.target.value})}>
+                                                <option value="">SUPERVISOR...</option>
+                                                {listaSupervisores.map(s => <option key={s} value={s}>{s}</option>)}
+                                            </select>
+                                            <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[12px] font-black border-2 border-transparent focus:border-blue-500 outline-none" value={loanData.monitor} onChange={e=>setLoanData({...loanData, monitor: e.target.value})} placeholder="MONITOREO ENTREGA" />
                                         </div>
-
                                         <div className="flex gap-3 pt-6">
                                             <button type="button" onClick={()=>setLoaningTool(null)} className="flex-1 py-4 text-[10px] text-slate-400 font-black">CANCELAR</button>
-                                            <button type="submit" className="flex-2 bg-blue-600 text-white px-8 py-4 rounded-2xl font-black text-[10px] uppercase shadow-lg shadow-blue-200">CONFIRMAR</button>
+                                            <button type="submit" className="flex-2 bg-blue-600 text-white px-8 py-4 rounded-2xl font-black text-[10px] shadow-lg">CONFIRMAR</button>
                                         </div>
                                     </form>
                                 </div>
@@ -347,13 +365,11 @@
 
                             {activeTab === 'inventory' && (
                                 <div className="space-y-3">
-                                    <div className="flex justify-between items-center px-4"><h2 className="text-[10px] font-black text-slate-400 tracking-widest uppercase">EXISTENCIAS</h2></div>
+                                    <div className="px-4"><h2 className="text-[10px] font-black text-slate-400 tracking-widest uppercase">EXISTENCIAS</h2></div>
                                     {inventory.map(i => (
-                                        <div key={i.docId} className="bg-white p-5 rounded-[2rem] flex flex-col sm:flex-row justify-between items-center shadow-sm border border-slate-100">
-                                            <div className="flex items-center gap-4 w-full sm:w-auto">
-                                                <div className="flex flex-col"><span className="font-black text-[13px] text-slate-800">{i.name}</span><span className="text-[9px] text-slate-400 font-mono font-bold">{i.id}</span></div>
-                                            </div>
-                                            <div className="flex items-center gap-4 bg-slate-50 p-1.5 rounded-2xl mt-3 sm:mt-0">
+                                        <div key={i.docId} className="bg-white p-5 rounded-[2rem] flex justify-between items-center shadow-sm border border-slate-100">
+                                            <div><div className="font-black text-[13px] text-slate-800">{i.name}</div><div className="text-[9px] text-slate-400 font-mono font-bold">{i.id}</div></div>
+                                            <div className="flex items-center gap-4 bg-slate-50 p-1.5 rounded-2xl">
                                                 <button onClick={() => updateStock(i.docId, i.stock, -1)} className="w-9 h-9 flex items-center justify-center bg-white rounded-xl text-slate-400">-</button>
                                                 <div className="px-4 text-center min-w-[70px]"><div className={`font-black text-lg ${i.stock <= i.min ? 'text-red-500' : 'text-slate-900'}`}>{i.stock}</div><div className="text-[8px] text-slate-300 font-extrabold">{i.unit}</div></div>
                                                 <button onClick={() => updateStock(i.docId, i.stock, 1)} className="w-9 h-9 flex items-center justify-center bg-white rounded-xl text-slate-400">+</button>
@@ -363,124 +379,97 @@
                                 </div>
                             )}
 
-                            {activeTab === 'tools' && (
-                                <div className="space-y-6">
-                                    <div className="flex flex-col gap-4 px-4">
-                                        <h2 className="text-[10px] font-black text-slate-400 tracking-widest uppercase">LISTADO DE HERRAMIENTAS</h2>
-                                        <div className="relative">
-                                            <input className="w-full p-4 bg-white rounded-2xl text-[11px] font-black shadow-sm border border-slate-100 outline-none uppercase" value={toolSearch} onChange={e => setToolSearch(e.target.value)} placeholder="BUSCAR POR NOMBRE O CÓDIGO..." />
-                                        </div>
-                                    </div>
-
-                                    <div className="space-y-3">
-                                        {sortedAndFilteredTools.map(t => (
-                                            <div key={t.docId} className={`bg-white p-5 rounded-[2rem] flex flex-col sm:flex-row justify-between items-center shadow-sm border ${t.status === 'PRESTADO' ? 'border-orange-200 bg-orange-50/30' : 'border-slate-100'}`}>
-                                                <div className="flex items-center gap-4">
-                                                    <div className={`p-3 rounded-xl ${t.status === 'PRESTADO' ? 'bg-orange-100 text-orange-500' : 'bg-emerald-100 text-emerald-500'}`}><EnergyLogo className="w-5 h-5" /></div>
-                                                    <div className="flex flex-col">
-                                                        <span className="font-black text-[13px] text-slate-800">{t.name}</span>
-                                                        <span className="text-[9px] text-slate-400 font-mono">{t.id}</span>
-                                                        {t.status === 'PRESTADO' && (
-                                                            <div className="mt-2 space-y-0.5 border-t border-orange-200 pt-1">
-                                                                <div className="text-[8px] font-black text-orange-600">TÉCNICO: {t.assignedTo}</div>
-                                                                <div className="text-[8px] font-black text-slate-500 uppercase">AUTORIZÓ: {t.supervisor}</div>
-                                                                <div className="text-[8px] font-black text-blue-500 uppercase">ENTREGÓ: {t.monitorTurno}</div>
+                            {activeTab === 'keys' && (
+                                <div className="space-y-3">
+                                    <div className="px-4"><h2 className="text-[10px] font-black text-slate-400 tracking-widest uppercase">LLAVES DE NODOS</h2></div>
+                                    <div className="grid grid-cols-1 gap-3">
+                                        {keys.sort((a,b)=>a.name.localeCompare(b.name)).map(k => (
+                                            <div key={k.docId} className={`bg-white p-5 rounded-[2rem] shadow-sm border flex flex-col sm:flex-row justify-between items-center gap-4 ${k.status === 'PRESTADO' ? 'border-blue-200 bg-blue-50/20' : 'border-slate-100'}`}>
+                                                <div className="flex items-center gap-4 w-full">
+                                                    <div className={`p-4 rounded-2xl ${k.status === 'PRESTADO' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}><KeyIcon /></div>
+                                                    <div>
+                                                        <div className="text-[13px] font-black">{k.name}</div>
+                                                        {k.status === 'PRESTADO' ? (
+                                                            <div className="mt-1 space-y-0.5">
+                                                                <div className="text-[9px] text-blue-600 font-black">EN POSESIÓN DE: {k.assignedTo}</div>
+                                                                <div className="text-[8px] text-slate-400 font-bold">ENTREGADO POR: {k.monitorTurno}</div>
                                                             </div>
+                                                        ) : (
+                                                            <div className="text-[9px] text-emerald-500 font-black tracking-widest">DISPONIBLE</div>
                                                         )}
                                                     </div>
                                                 </div>
-                                                <div className="flex items-center gap-2 mt-4 sm:mt-0">
-                                                    {t.status === 'DISPONIBLE' ? 
-                                                        <button onClick={() => setLoaningTool(t)} className="px-6 py-3 bg-slate-900 text-white rounded-xl text-[10px] uppercase tracking-widest font-black">ENTREGAR</button> : 
-                                                        <button onClick={() => handleToolReturn(t)} className="px-6 py-3 bg-white border-2 border-orange-500 text-orange-500 rounded-xl text-[10px] uppercase tracking-widest font-black">DEVOLUCIÓN</button>
-                                                    }
+                                                <div className="shrink-0 w-full sm:w-auto">
+                                                    {k.status === 'DISPONIBLE' ? (
+                                                        <button onClick={() => setLoaningKey(k)} className="w-full sm:w-auto px-6 py-3 bg-slate-900 text-white rounded-xl text-[10px] font-black">ENTREGAR</button>
+                                                    ) : (
+                                                        <button onClick={() => handleReturnKey(k)} className="w-full sm:w-auto px-6 py-3 bg-white border-2 border-blue-600 text-blue-600 rounded-xl text-[10px] font-black">RECIBIR LLAVE</button>
+                                                    )}
                                                 </div>
                                             </div>
                                         ))}
                                     </div>
+                                </div>
+                            )}
+
+                            {activeTab === 'tools' && (
+                                <div className="space-y-3">
+                                    <div className="px-4"><h2 className="text-[10px] font-black text-slate-400 tracking-widest uppercase">EQUIPOS Y HERRAMIENTAS</h2></div>
+                                    {tools.map(t => (
+                                        <div key={t.docId} className="bg-white p-5 rounded-[2rem] flex justify-between items-center shadow-sm border border-slate-100">
+                                            <div><div className="font-black text-[13px] text-slate-800">{t.name}</div><div className="text-[9px] text-slate-400">{t.status} - {t.assignedTo || 'EN ALMACEN'}</div></div>
+                                            <button onClick={() => t.status === 'DISPONIBLE' ? setLoaningTool(t) : null} className={`px-4 py-2 rounded-xl text-[10px] ${t.status === 'DISPONIBLE' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-300'}`}>
+                                                {t.status === 'DISPONIBLE' ? 'PRESTAR' : 'OCUPADO'}
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {activeTab === 'history' && (
+                                <div className="space-y-3">
+                                    <div className="px-4 flex justify-between items-center"><h2 className="text-[10px] font-black text-slate-400 tracking-widest uppercase">BITÁCORA</h2></div>
+                                    {history.map(h => {
+                                        const type = h.type || 'MOVIMIENTO';
+                                        const isEntry = type.includes('ENTRADA') || type.includes('DEVOLUCION');
+                                        return (
+                                            <div key={h.id} className={`bg-white p-5 rounded-[2.2rem] shadow-sm border-l-4 ${isEntry ? 'border-l-emerald-500' : 'border-l-blue-500'} flex justify-between items-center`}>
+                                                <div>
+                                                    <div className="text-[11px] font-black">{(h.item || "MATERIAL").toUpperCase()}</div>
+                                                    <div className="text-[8px] text-slate-400 mt-1 uppercase">RESP: {h.tech || h.responsible} | MONITOREO: {h.monitor || 'N/A'}</div>
+                                                    <div className="text-[8px] text-slate-300 font-bold mt-1">{(h.dateStr || "---")}</div>
+                                                </div>
+                                                <div className={`font-black text-sm ${isEntry ? 'text-emerald-500' : 'text-blue-500'}`}>{isEntry ? '+' : '-'}{h.qty}</div>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             )}
 
                             {activeTab === 'exit' && (
-                                <form onSubmit={handleBulkExit} className="bg-white p-8 rounded-[2.5rem] shadow-premium border border-slate-100 space-y-6">
-                                    <div className="text-center uppercase"><h3 className="text-sm font-black text-slate-800">CARGA DE DESPACHO</h3></div>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        <div className="space-y-1">
-                                            <label className="text-[8px] text-slate-400 ml-2 uppercase font-black">TÉCNICO RESPONSABLE</label>
-                                            <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none border-2 border-transparent focus:border-blue-100" value={exitHeader.tech} onChange={e=>setExitHeader({...exitHeader, tech: e.target.value.toUpperCase()})} placeholder="NOMBRE" />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <label className="text-[8px] text-slate-400 ml-2 uppercase font-black">TURNO MONITOREO</label>
-                                            <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none border-2 border-transparent focus:border-blue-100" value={exitHeader.monitor} onChange={e=>setExitHeader({...exitHeader, monitor: e.target.value.toUpperCase()})} placeholder="QUIÉN DESPACHA" />
-                                        </div>
+                                <form onSubmit={handleBulkExit} className="bg-white p-8 rounded-[2.5rem] shadow-premium space-y-6">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none" value={exitHeader.tech} onChange={e=>setExitHeader({...exitHeader, tech: e.target.value.toUpperCase()})} placeholder="TÉCNICO" />
+                                        <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none" value={exitHeader.monitor} onChange={e=>setExitHeader({...exitHeader, monitor: e.target.value.toUpperCase()})} placeholder="MONITOREO" />
                                     </div>
-                                    <div className="relative">
-                                        <label className="text-[8px] text-slate-400 ml-2 uppercase font-black">BUSCAR MATERIAL</label>
-                                        <input className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none" value={currentSearch} onFocus={() => setShowSearchList(true)} onChange={e => {setCurrentSearch(e.target.value); setShowSearchList(true);}} placeholder="ESCRIBA PARA BUSCAR..." />
-                                        {showSearchList && (
-                                            <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-2xl border z-50 overflow-hidden">
-                                                {inventory.filter(i => (i.name || "").toLowerCase().includes(currentSearch.toLowerCase())).slice(0, 5).map(i => (
-                                                    <div key={i.id} onClick={() => addItemToExitList(i)} className="p-4 hover:bg-blue-50 cursor-pointer flex justify-between items-center border-b last:border-0">
-                                                        <div className="text-[11px] font-black">{i.name}</div>
-                                                        <div className="text-[10px] text-blue-600">EN STOCK: {i.stock}</div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                    <div className="space-y-2">
-                                        {selectedItems.map(item => (
-                                            <div key={item.id} className="bg-slate-50 p-4 rounded-2xl flex items-center justify-between">
-                                                <div className="text-[11px] font-black truncate max-w-[150px]">{item.name}</div>
-                                                <div className="flex items-center gap-2">
-                                                    <input type="number" className="w-16 p-2 bg-white rounded-xl text-[11px] font-black text-center" value={item.qty} onChange={e => setSelectedItems(selectedItems.map(si => si.id === item.id ? {...si, qty: Number(e.target.value)} : si))} min="1" />
-                                                    <button type="button" onClick={() => setSelectedItems(selectedItems.filter(si => si.id !== item.id))} className="text-red-400 px-2 font-black">×</button>
-                                                </div>
+                                    <input className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none" value={currentSearch} onChange={e => setCurrentSearch(e.target.value)} placeholder="BUSCAR MATERIAL..." />
+                                    <div className="max-h-40 overflow-y-auto space-y-1">
+                                        {inventory.filter(i => i.name.toLowerCase().includes(currentSearch.toLowerCase())).slice(0,4).map(i => (
+                                            <div key={i.docId} onClick={() => !selectedItems.find(s=>s.docId===i.docId) && setSelectedItems([...selectedItems, {...i, qty:1}])} className="p-3 bg-slate-50 rounded-xl text-[10px] font-black cursor-pointer hover:bg-blue-50">
+                                                {i.name} (STOCK: {i.stock})
                                             </div>
                                         ))}
                                     </div>
-                                    <button disabled={selectedItems.length === 0} className="w-full bg-blue-600 disabled:bg-slate-200 text-white p-5 rounded-3xl font-black text-[11px]">GENERAR DESPACHO</button>
-                                </form>
-                            )}
-
-                            {activeTab === 'history' && (
-                                <div className="space-y-4">
-                                    <div className="bg-white p-6 rounded-[2.5rem] shadow-sm flex justify-between items-center">
-                                        <h2 className="text-[10px] font-black text-slate-400 tracking-widest uppercase">REGISTRO DE MOVIMIENTOS</h2>
-                                        <div className="flex gap-2">
-                                            <button onClick={() => exportHistoryPDF(history)} className="bg-slate-900 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest">EXPORTAR PDF</button>
-                                        </div>
+                                    <div className="space-y-2">
+                                        {selectedItems.map(si => (
+                                            <div key={si.docId} className="flex justify-between items-center bg-blue-50 p-3 rounded-xl">
+                                                <span className="text-[10px] font-black">{si.name}</span>
+                                                <input type="number" className="w-16 p-1 bg-white rounded text-center font-black" value={si.qty} onChange={e=>setSelectedItems(selectedItems.map(x=>x.docId===si.docId?{...x, qty:Number(e.target.value)}:x))} />
+                                            </div>
+                                        ))}
                                     </div>
-                                    
-                                    {history.length === 0 ? (
-                                        <div className="bg-white p-12 rounded-[2.5rem] text-center border border-dashed border-slate-200">
-                                            <p className="text-[10px] font-black text-slate-400 uppercase">NO HAY MOVIMIENTOS REGISTRADOS</p>
-                                        </div>
-                                    ) : (
-                                        <div className="space-y-2.5">
-                                            {history.map(h => {
-                                                const type = h.type || 'DESCONOCIDO';
-                                                const isEntry = type === 'ENTRADA' || type === 'DEVOLUCION_HERRAMIENTA';
-                                                return (
-                                                    <div key={h.id} className={`bg-white p-5 rounded-[2.2rem] flex flex-col sm:flex-row justify-between items-center shadow-sm border-l-4 ${isEntry ? 'border-l-emerald-500' : 'border-l-red-500'} gap-3 transition-transform hover:scale-[1.01]`}>
-                                                        <div className="w-full">
-                                                            <div className="font-black text-[12px] text-slate-800 uppercase">{(h.item || "ÍTEM SIN NOMBRE")}</div>
-                                                            <div className="text-[8px] font-black text-slate-400 uppercase mt-1">
-                                                                TIPO: {type.replace(/_/g,' ')} | RESP: <span className="text-slate-900">{(h.tech || h.responsible || "ALMACÉN").toUpperCase()}</span>
-                                                            </div>
-                                                            {h.supervisor && <div className="text-[8px] font-black text-orange-600 mt-1 uppercase">AUTORIZÓ: {h.supervisor}</div>}
-                                                            <div className="text-[8px] font-black text-blue-700 mt-0.5 uppercase">ENTREGÓ (TURNO): {(h.monitor || "N/A").toUpperCase()}</div>
-                                                        </div>
-                                                        <div className="text-right shrink-0">
-                                                            <div className={`font-black text-sm ${isEntry ? 'text-emerald-600' : 'text-red-600'}`}>{isEntry ? '+' : '-'}{h.qty || 0}</div>
-                                                            <div className="text-[8px] text-slate-300 font-black mt-0.5">{(h.dateStr || "FECHA DESCONOCIDA")}</div>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    )}
-                                </div>
+                                    <button className="w-full bg-blue-600 text-white p-5 rounded-3xl font-black text-[11px]">GENERAR SALIDA</button>
+                                </form>
                             )}
                         </main>
                     </div>
@@ -493,5 +482,4 @@
     </script>
 </body>
 </html>
-
 
