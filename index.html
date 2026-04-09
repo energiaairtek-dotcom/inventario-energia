@@ -174,19 +174,36 @@
                             if (u) {
                                 setUser(u);
                                 setIsCloud(true);
-                                // Sincronizar perfil automáticamente
                                 try {
-                                    const snap = await getDoc(doc(dbRef.current, 'airtek_users', u.uid));
-                                    if (snap.exists()) {
-                                        const d = snap.data();
-                                        const profile = {
+                                    // 1. Intentar en airtek_users (nueva)
+                                    const snapUnified = await getDoc(doc(dbRef.current, 'airtek_users', u.uid));
+                                    let profile = null;
+
+                                    if (snapUnified.exists()) {
+                                        const d = snapUnified.data();
+                                        profile = {
                                             nombre: d.name || d.nombre || u.email,
                                             email: u.email,
                                             rol: (d.apps && d.apps.almacen) || 'lector'
                                         };
+                                    } 
+                                    
+                                    // 2. Si no hay rol o no existe, intentar en energy_users (legacy/actual)
+                                    if (!profile || profile.rol === 'lector') {
+                                        const snapLegacy = await getDoc(doc(dbRef.current, 'energy_users', u.uid));
+                                        if (snapLegacy.exists()) {
+                                            const dl = snapLegacy.data();
+                                            profile = {
+                                                nombre: dl.name || dl.nombre || profile?.nombre || u.email,
+                                                email: u.email,
+                                                rol: dl.role || dl.rol || 'lector'
+                                            };
+                                        }
+                                    }
+
+                                    if (profile) {
                                         setCurrentUser(profile);
-                                        // Activar modo editor automáticamente para autorizados
-                                        if (profile.rol === 'admin' || profile.rol === 'operador') {
+                                        if (profile.rol === 'admin' || profile.rol === 'supervisor' || profile.rol === 'operador') {
                                             setIsAdminMode(true);
                                         }
                                     } else {
@@ -1237,3 +1254,4 @@
     </script>
 </body>
 </html>
+
