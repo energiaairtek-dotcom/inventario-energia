@@ -29,8 +29,8 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, updateDoc, deleteDoc, collection, query, onSnapshot, addDoc, serverTimestamp, writeBatch, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, signInWithEmailAndPassword, signOut, updatePassword, EmailAuthProvider, reauthenticateWithCredential } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, updateDoc, deleteDoc, collection, query, onSnapshot, addDoc, serverTimestamp, writeBatch, getDoc, limit, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         const myConfig = {
             apiKey: "AIzaSyDwaK4Z26RfqDwNvwdMqri08oEjwG9qymc",
             authDomain: "almacen-airtek.firebaseapp.com",
@@ -40,7 +40,7 @@
             appId: "1:934058211778:web:6cc9d820c41fa90aa5fe5b"
         };
         window.__firebase_config_manual = JSON.stringify(myConfig);
-        window.FirebaseSDK = { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, getFirestore, doc, setDoc, updateDoc, deleteDoc, collection, query, onSnapshot, addDoc, serverTimestamp, writeBatch, getDoc };
+        window.FirebaseSDK = { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, signInWithEmailAndPassword, signOut, updatePassword, EmailAuthProvider, reauthenticateWithCredential, getFirestore, doc, setDoc, updateDoc, deleteDoc, collection, query, onSnapshot, addDoc, serverTimestamp, writeBatch, getDoc, limit, orderBy };
         window.dispatchEvent(new Event('firebase-ready'));
     </script>
 
@@ -115,16 +115,36 @@
             const [restockQty, setRestockQty]     = useState('');
             const [restockResp, setRestockResp]   = useState('');
             const [isAdminMode, setIsAdminMode]   = useState(false);
+            const [isLoaning, setIsLoaning]       = useState(false);
 
             // Maestro - nuevos items
             const [newItem, setNewItem]       = useState({ id: '', name: '', stock: '', min: 5, unit: 'PZA' });
             const [newTool, setNewTool]       = useState({ id: '', name: '', brand: '', serial: '' });
             const [newKeyItem, setNewKeyItem] = useState({ name: '' });
 
+            // ── Login / Cambio de contraseña ──
+            const [currentUser, setCurrentUser]   = useState(null); // { nombre, email, rol }
+            const [loginModal, setLoginModal]       = useState(false);
+            const [loginForm, setLoginForm]         = useState({ email: '', password: '' });
+            const [loginError, setLoginError]       = useState('');
+            const [loginLoading, setLoginLoading]   = useState(false);
+            const [pwModal, setPwModal]             = useState(false);
+            const [pwForm, setPwForm]               = useState({ current: '', newPw: '', confirm: '' });
+            const [pwError, setPwError]             = useState('');
+            const [pwSuccess, setPwSuccess]         = useState('');
+            const [pwLoading, setPwLoading]         = useState(false);
+
             const dbRef  = useRef(null);
+            const authRef = useRef(null);
             const appId  = typeof __app_id !== 'undefined' ? __app_id : 'airtek-energia-v1';
             const listaSupervisores = ["LUIS RAMOS", "DIEGO CHACÍN", "GUSTAVO RINCÓN"];
             const listadoNodos      = ["COMEDOR", "LAGO CARIBE", "SANTA CRUZ", "POMONA", "TUNAS", "SAN RAFAEL", "MENE GRANDE", "LABORATORIO"];
+
+            // Permisos calculados por jerarquía
+            const isMasterAdmin = currentUser && currentUser.rol === 'admin';
+            const canManage     = currentUser && (isMasterAdmin || currentUser.rol === 'supervisor' || currentUser.rol === 'operador' || currentUser.rol === 'tecnico');
+            const canEditMaster = currentUser && (isMasterAdmin || currentUser.rol === 'supervisor');
+            const canDelete     = isMasterAdmin;
 
             // ── Firebase init ────────────────────────────────────────────────────────
             useEffect(() => {
@@ -137,6 +157,7 @@
                         const app = initializeApp(config);
                         dbRef.current = getFirestore(app);
                         const auth = getAuth(app);
+                        authRef.current = auth;
                         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                             await signInWithCustomToken(auth, __initial_auth_token);
                         } else {
@@ -149,7 +170,36 @@
                                 await setDoc(ref, { name: nodo, status: 'DISPONIBLE', assignedTo: '', monitorTurno: '', lastMove: '' });
                             }
                         }
-                        const unsub = onAuthStateChanged(auth, (u) => { if (u) { setUser(u); setIsCloud(true); } setLoading(false); });
+                        const unsub = onAuthStateChanged(auth, async (u) => {
+                            if (u) {
+                                setUser(u);
+                                setIsCloud(true);
+                                // Sincronizar perfil automáticamente
+                                try {
+                                    const snap = await getDoc(doc(dbRef.current, 'airtek_users', u.uid));
+                                    if (snap.exists()) {
+                                        const d = snap.data();
+                                        const profile = {
+                                            nombre: d.name || d.nombre || u.email,
+                                            email: u.email,
+                                            rol: (d.apps && d.apps.almacen) || 'lector'
+                                        };
+                                        setCurrentUser(profile);
+                                        // Activar modo editor automáticamente para autorizados
+                                        if (profile.rol === 'admin' || profile.rol === 'operador') {
+                                            setIsAdminMode(true);
+                                        }
+                                    } else {
+                                        setCurrentUser(null);
+                                        setIsAdminMode(false);
+                                    }
+                                } catch(err) { console.warn("Error sync profile:", err); }
+                            } else {
+                                setCurrentUser(null);
+                                setIsAdminMode(false);
+                            }
+                            setLoading(false);
+                        });
                         return unsub;
                     } catch (e) { setLoading(false); }
                 };
@@ -158,19 +208,83 @@
                 return () => window.removeEventListener('firebase-ready', init);
             }, []);
 
+            // ── Login con email/password (acceso a almacén) ──
+            const handleLogin = async (e) => {
+                e.preventDefault();
+                setLoginError(''); setLoginLoading(true);
+                const { signInWithEmailAndPassword, getDoc, doc: docFn } = window.FirebaseSDK;
+                try {
+                    const cred = await signInWithEmailAndPassword(authRef.current, loginForm.email.trim(), loginForm.password);
+                    const uid = cred.user.uid;
+                    let profile = null;
+                    try {
+                        const snap = await getDoc(docFn(dbRef.current, 'airtek_users', uid));
+                        if (snap.exists()) {
+                            const d = snap.data();
+                            if (d.approved === false) {
+                                await window.FirebaseSDK.signOut(authRef.current);
+                                await window.FirebaseSDK.signInAnonymously(authRef.current);
+                                setLoginError('Tu cuenta está pendiente de aprobación.'); setLoginLoading(false); return;
+                            }
+                            profile = { nombre: d.name || d.nombre || cred.user.email, email: d.email || cred.user.email, rol: (d.apps && d.apps.almacen) || 'operador' };
+                        }
+                    } catch(err) { console.warn('airtek_users lookup failed'); }
+                    if (!profile) profile = { nombre: cred.user.email, email: cred.user.email, rol: 'operador' };
+                    setCurrentUser(profile);
+                    setLoginModal(false); setLoginForm({ email: '', password: '' });
+                } catch(err) {
+                    setLoginError(err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password'
+                        ? 'Correo o contraseña incorrectos.'
+                        : err.code === 'auth/too-many-requests' ? 'Demasiados intentos. Intente más tarde.' : 'Error al iniciar sesión.');
+                }
+                setLoginLoading(false);
+            };
+
+            const handleLogout = async () => {
+                const { signOut: so, signInAnonymously } = window.FirebaseSDK;
+                try { await so(authRef.current); await signInAnonymously(authRef.current); } catch(e) { console.error(e); }
+                setCurrentUser(null);
+            };
+
+            const handleChangePassword = async (e) => {
+                e.preventDefault();
+                setPwError(''); setPwSuccess('');
+                if (pwForm.newPw.length < 6) { setPwError('La nueva contraseña debe tener al menos 6 caracteres.'); return; }
+                if (pwForm.newPw !== pwForm.confirm) { setPwError('Las contraseñas nuevas no coinciden.'); return; }
+                setPwLoading(true);
+                const { EmailAuthProvider, reauthenticateWithCredential, updatePassword } = window.FirebaseSDK;
+                try {
+                    const u = authRef.current.currentUser;
+                    const credential = EmailAuthProvider.credential(u.email, pwForm.current);
+                    await reauthenticateWithCredential(u, credential);
+                    await updatePassword(u, pwForm.newPw);
+                    setPwSuccess('¡Contraseña actualizada correctamente! El cambio aplica en todas las apps Airtek.');
+                    setPwForm({ current: '', newPw: '', confirm: '' });
+                } catch(err) {
+                    setPwError(err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential'
+                        ? 'La contraseña actual es incorrecta.'
+                        : err.code === 'auth/weak-password' ? 'Contraseña muy débil (mín. 6 caracteres).'
+                        : 'Error al cambiar la contraseña.');
+                }
+                setPwLoading(false);
+            };
+
             // ── Listeners Firestore ──────────────────────────────────────────────────
             useEffect(() => {
                 if (!user || !dbRef.current) return;
-                const { collection, onSnapshot } = window.FirebaseSDK;
+                const { collection, onSnapshot, query, limit, orderBy } = window.FirebaseSDK;
                 const base = (col) => collection(dbRef.current, 'artifacts', appId, 'public', 'data', col);
-                const u1 = onSnapshot(base('inventory'), (s) => setInventory(s.docs.map(d => ({ ...d.data(), docId: d.id }))));
-                const u2 = onSnapshot(base('history'), (s) => {
+                
+                const u1 = onSnapshot(query(base('inventory'), limit(300)), (s) => setInventory(s.docs.map(d => ({ ...d.data(), docId: d.id }))));
+                
+                const qHist = query(base('history'), orderBy('timestamp', 'desc'), limit(150));
+                const u2 = onSnapshot(qHist, (s) => {
                     const data = s.docs.map(d => ({ ...d.data(), id: d.id }));
-                    data.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
                     setHistory(data);
                 });
-                const u3 = onSnapshot(base('tools_inventory'), (s) => setTools(s.docs.map(d => ({ ...d.data(), docId: d.id }))));
-                const u4 = onSnapshot(base('keys_inventory'),  (s) => setKeys(s.docs.map(d => ({ ...d.data(), docId: d.id }))));
+                
+                const u3 = onSnapshot(query(base('tools_inventory'), limit(300)), (s) => setTools(s.docs.map(d => ({ ...d.data(), docId: d.id }))));
+                const u4 = onSnapshot(query(base('keys_inventory'),  limit(300)), (s) => setKeys(s.docs.map(d => ({ ...d.data(), docId: d.id }))));
                 return () => { u1(); u2(); u3(); u4(); };
             }, [user, appId]);
 
@@ -237,16 +351,19 @@
 
             // ── CRUD / Transacciones ─────────────────────────────────────────────────
             const deleteInventoryItem = async (docId, name) => {
+                if (!canAdmin) return alert("SOLO ADMINISTRADORES PUEDEN ELIMINAR ARTÍCULOS");
                 if (!confirm(`¿CONFIRMAR ELIMINACIÓN DE: ${name}?`)) return;
                 const { doc, deleteDoc } = window.FirebaseSDK;
                 await deleteDoc(doc(dbRef.current, 'artifacts', appId, 'public', 'data', 'inventory', docId)).catch(console.error);
             };
             const deleteKey = async (docId, name) => {
-                if (!confirm(`¿ELIMINAR LLAVE: ${name}?`)) return;
+                if (!canAdmin) return alert("SOLO ADMINISTRADORES PUEDEN ELIMINAR LLAVES");
+                if (!confirm(`¿ELIMINAR LLAVE DE: ${name}?`)) return;
                 const { doc, deleteDoc } = window.FirebaseSDK;
                 await deleteDoc(doc(dbRef.current, 'artifacts', appId, 'public', 'data', 'keys_inventory', docId)).catch(console.error);
             };
             const deleteTool = async (docId, name) => {
+                if (!canAdmin) return alert("SOLO ADMINISTRADORES PUEDEN ELIMINAR HERRAMIENTAS");
                 if (!confirm(`¿ELIMINAR HERRAMIENTA: ${name}?`)) return;
                 const { doc, deleteDoc } = window.FirebaseSDK;
                 await deleteDoc(doc(dbRef.current, 'artifacts', appId, 'public', 'data', 'tools_inventory', docId)).catch(console.error);
@@ -254,6 +371,7 @@
 
             const handleToolLoan = async (e) => {
                 e.preventDefault();
+                if (!canManage) return alert("NO TIENES PERMISO PARA ESTA ACCIÓN");
                 if (!loaningTool) return;
                 const { doc, updateDoc, addDoc, collection, serverTimestamp } = window.FirebaseSDK;
                 const dateStr = new Date().toLocaleString().toUpperCase();
@@ -274,6 +392,7 @@
 
             const handleToolReturnSubmit = async (e) => {
                 e.preventDefault();
+                if (!canManage) return alert("NO TIENES PERMISO PARA ESTA ACCIÓN");
                 if (!returningTool) return;
                 const { doc, updateDoc, addDoc, collection, serverTimestamp } = window.FirebaseSDK;
                 const dateStr = new Date().toLocaleString().toUpperCase();
@@ -293,6 +412,7 @@
 
             const handleKeyLoan = async (e) => {
                 e.preventDefault();
+                if (!canManage) return alert("NO TIENES PERMISO PARA ESTA ACCIÓN");
                 if (!loaningKey) return;
                 const { doc, updateDoc, addDoc, collection, serverTimestamp } = window.FirebaseSDK;
                 const dateStr = new Date().toLocaleString().toUpperCase();
@@ -311,6 +431,7 @@
             };
 
             const handleReturnKey = async (key) => {
+                if (!canManage) return alert("NO TIENES PERMISO PARA ESTA ACCIÓN");
                 if (!confirm(`¿CONFIRMAS LA DEVOLUCIÓN DE LA LLAVE: ${key.name}?`)) return;
                 const { doc, updateDoc, addDoc, collection, serverTimestamp } = window.FirebaseSDK;
                 const dateStr = new Date().toLocaleString().toUpperCase();
@@ -328,6 +449,7 @@
 
             const handleBulkExit = async (e) => {
                 e.preventDefault();
+                if (!canManage) return alert("ACCESO DENEGADO PARA ESTA OPERACIÓN");
                 if (selectedItems.length === 0 || !exitHeader.monitor || !exitHeader.supervisor) return;
                 const { doc, writeBatch, collection, serverTimestamp } = window.FirebaseSDK;
                 const batch = writeBatch(dbRef.current);
@@ -349,6 +471,7 @@
 
             const handleRestockSubmit = async (e) => {
                 e.preventDefault();
+                if (!canManage) return alert("NO TIENES PERMISO PARA ESTA ACCIÓN");
                 if (!restockItem || !restockQty) return;
                 const { doc, updateDoc, addDoc, collection, serverTimestamp } = window.FirebaseSDK;
                 const qtyNum = Number(restockQty);
@@ -366,6 +489,7 @@
 
             const handleAddItem = async (e) => {
                 e.preventDefault();
+                if (!canManage) return alert("NO TIENES PERMISO PARA ESTA ACCIÓN");
                 const { collection, addDoc, serverTimestamp } = window.FirebaseSDK;
                 const dateStr = new Date().toLocaleString().toUpperCase();
                 try {
@@ -387,6 +511,7 @@
 
             const handleAddTool = async (e) => {
                 e.preventDefault();
+                if (!canManage) return alert("NO TIENES PERMISO PARA ESTA ACCIÓN");
                 const { collection, addDoc, serverTimestamp } = window.FirebaseSDK;
                 try {
                     await addDoc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'tools_inventory'), {
@@ -401,6 +526,7 @@
 
             const handleAddKey = async (e) => {
                 e.preventDefault();
+                if (!canManage) return alert("NO TIENES PERMISO PARA ESTA ACCIÓN");
                 const { doc, setDoc, serverTimestamp } = window.FirebaseSDK;
                 const keyName = newKeyItem.name.toUpperCase();
                 if (!keyName) return;
@@ -414,6 +540,7 @@
 
             const handleSaveEdit = async (e) => {
                 e.preventDefault();
+                if (!canManage) return alert("NO TIENES PERMISO PARA ESTA ACCIÓN");
                 const { doc, updateDoc } = window.FirebaseSDK;
                 try {
                     await updateDoc(doc(dbRef.current, 'artifacts', appId, 'public', 'data', 'inventory', editingItem.docId), {
@@ -494,6 +621,79 @@
             return (
                 <div className="min-h-screen pb-24 no-print uppercase font-bold text-slate-900">
 
+                    {/* ── Modal Login ──────────────────────────────────────────────── */}
+                    {loginModal && (
+                        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+                            <div className="bg-white rounded-[2.5rem] p-8 max-w-sm w-full mx-4 shadow-2xl border border-slate-100 animate-in fade-in zoom-in duration-300">
+                                <div className="text-center mb-6">
+                                    <div className="w-16 h-16 bg-blue-50 rounded-3xl flex items-center justify-center mx-auto mb-4">
+                                        <EnergyLogo className="text-blue-600 w-8 h-8" />
+                                    </div>
+                                    <h3 className="text-sm font-black text-slate-800 tracking-widest">ACCESO PERSONAL</h3>
+                                    <p className="text-[10px] text-slate-400 font-bold mt-2">INGRESA TUS CREDENCIALES AIRTEK</p>
+                                </div>
+                                
+                                <form onSubmit={handleLogin} className="space-y-4">
+                                    <div className="space-y-1">
+                                        <label className="text-[8px] font-black text-slate-400 ml-2">CORREO ELECTRÓNICO</label>
+                                        <input required type="email" placeholder="EJ: USUARIO@AIRTEK.NET" 
+                                            className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none border-2 border-transparent focus:border-blue-100 normal-case"
+                                            style={{textTransform:'none'}}
+                                            value={loginForm.email} onChange={e => setLoginForm({ ...loginForm, email: e.target.value })} />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-[8px] font-black text-slate-400 ml-2">CONTRASEÑA</label>
+                                        <input required type="password" placeholder="••••••••" 
+                                            className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black outline-none border-2 border-transparent focus:border-blue-100"
+                                            value={loginForm.password} onChange={e => setLoginForm({ ...loginForm, password: e.target.value })} />
+                                    </div>
+                                    {loginError && <p className="text-[9px] font-black text-red-500 text-center bg-red-50 py-2 rounded-xl border border-red-100">{loginError}</p>}
+                                    
+                                    <button disabled={loginLoading} className="w-full bg-blue-600 hover:bg-blue-700 text-white p-5 rounded-3xl font-black text-[11px] tracking-widest transition-all shadow-lg shadow-blue-200">
+                                        {loginLoading ? 'VALIDANDO...' : 'ENTRAR AL SISTEMA'}
+                                    </button>
+                                    <button type="button" onClick={() => setLoginModal(false)} className="w-full text-[9px] font-black text-slate-300 hover:text-slate-500 transition-colors">CANCELAR</button>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ── Modal Cambio de Contraseña ────────────────────────────────── */}
+                    {pwModal && (
+                        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+                            <div className="bg-white w-full max-w-sm rounded-[2rem] p-8 shadow-2xl">
+                                <div className="text-center mb-6">
+                                    <div className="text-sm font-black text-slate-800">SEGURIDAD</div>
+                                    <div className="text-[10px] text-slate-400 font-bold mt-1">{currentUser?.email}</div>
+                                </div>
+                                {pwSuccess ? (
+                                    <div className="text-center">
+                                        <div className="text-[11px] font-black text-emerald-600 bg-emerald-50 rounded-2xl p-4 mb-4">✓ {pwSuccess}</div>
+                                        <button onClick={() => { setPwModal(false); setPwSuccess(''); }} className="w-full bg-slate-900 text-white p-4 rounded-2xl font-black text-[11px]">CERRAR</button>
+                                    </div>
+                                ) : (
+                                    <form onSubmit={handleChangePassword} className="space-y-3">
+                                        {[['current','CONTRASEÑA ACTUAL'],['newPw','NUEVA CONTRASEÑA'],['confirm','CONFIRMAR NUEVA']].map(([k,lbl]) => (
+                                            <div key={k}>
+                                                <label className="text-[9px] font-black text-slate-400 tracking-widest ml-1">{lbl}</label>
+                                                <input required type="password"
+                                                    className="w-full p-4 bg-slate-50 rounded-2xl text-[12px] font-black border-2 border-transparent focus:border-blue-500 outline-none mt-1"
+                                                    value={pwForm[k]} onChange={e => setPwForm({ ...pwForm, [k]: e.target.value })}
+                                                    placeholder="••••••••" style={{textTransform:'none'}} />
+                                            </div>
+                                        ))}
+                                        {pwError && <div className="text-[10px] font-black text-red-500 bg-red-50 rounded-xl px-3 py-2">{pwError}</div>}
+                                        <button type="submit" disabled={pwLoading} className="w-full bg-blue-600 disabled:bg-slate-200 text-white p-4 rounded-2xl font-black text-[11px] tracking-widest">
+                                            {pwLoading ? 'ACTUALIZANDO...' : 'CAMBIAR CONTRASEÑA'}
+                                        </button>
+                                        <button type="button" onClick={() => { setPwModal(false); setPwError(''); setPwForm({ current: '', newPw: '', confirm: '' }); }}
+                                            className="w-full text-[10px] text-slate-400 font-black py-2">CANCELAR</button>
+                                    </form>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
                     {/* ── Header ─────────────────────────────────────────────────────── */}
                     <header className="bg-white border-b border-slate-100 sticky top-0 z-50 px-6 py-4">
                         <div className="max-w-3xl mx-auto flex items-center justify-between">
@@ -502,7 +702,7 @@
                                 <div>
                                     <div className="flex items-center gap-2">
                                         <span className="text-lg font-black tracking-tighter">Airtek</span>
-                                        <span className="text-[10px] font-black bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded tracking-tighter">ENERGÍA</span>
+                                        <span className="text-[10px] font-black bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded tracking-tighter">ALMACÉN</span>
                                     </div>
                                     <div className="flex items-center gap-1.5 mt-0.5">
                                         <span className={`w-1.5 h-1.5 rounded-full ${isCloud ? 'bg-emerald-500 pulse-online' : 'bg-red-500'}`}></span>
@@ -510,10 +710,35 @@
                                     </div>
                                 </div>
                             </div>
-                            <button onClick={() => setIsAdminMode(!isAdminMode)}
-                                className={`text-[9px] px-3 py-1.5 rounded-full font-black tracking-wider transition-colors ${isAdminMode ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                                {isAdminMode ? 'MODO EDITOR' : 'VISTA LECTURA'}
-                            </button>
+                            <div className="flex items-center gap-2">
+                                {currentUser ? (
+                                    <div className="flex items-center gap-3 bg-white/10 p-1.5 pr-4 rounded-full border border-white/10">
+                                        <button onClick={() => setPwModal(true)} 
+                                            className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-[10px] font-black hover:bg-blue-500 transition-colors">
+                                            {currentUser.nombre.charAt(0)}
+                                        </button>
+                                        <div className="flex flex-col">
+                                            <span className="text-[9px] font-black text-slate-800 leading-none tracking-wide">{currentUser.nombre}</span>
+                                            <span className="text-[7px] font-bold text-blue-500 uppercase mt-0.5 tracking-widest">{currentUser.rol}</span>
+                                        </div>
+                                        <button onClick={handleLogout} className="ml-2 text-slate-400 hover:text-red-400 transition-colors pt-0.5">
+                                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center gap-2">
+                                        <button onClick={() => setLoginModal(true)}
+                                            className="text-[9px] px-5 py-2 rounded-full font-black tracking-widest bg-blue-600 text-white shadow-lg hover:bg-blue-500 transition-all border border-blue-400/30">
+                                            ACCESO PERSONAL
+                                        </button>
+                                        {isAdminMode && (
+                                            <div className="px-3 py-2 bg-slate-800 rounded-full text-[8px] font-black text-slate-400 tracking-widest border border-slate-700">
+                                                MODO LECTURA
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </header>
 
@@ -524,7 +749,8 @@
                             {[
                                 { id: 'inventory', label: 'MATERIALES' }, { id: 'exit', label: 'DESPACHO' },
                                 { id: 'tools', label: 'HERRAMIENTAS' }, { id: 'keys', label: 'LLAVES' },
-                                { id: 'history', label: 'BITÁCORA' }, { id: 'admin', label: 'MAESTRO' }
+                                { id: 'history', label: 'BITÁCORA' },
+                                ...(canEditMaster ? [{ id: 'admin', label: 'MAESTRO' }] : [])
                             ].map(t => (
                                 <button key={t.id} onClick={() => setActiveTab(t.id)}
                                     className={`flex-1 min-w-[90px] py-3 rounded-2xl font-black text-[10px] tracking-wider transition-all ${activeTab === t.id ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-700'}`}>
@@ -540,8 +766,8 @@
                                 <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
                                     <form onSubmit={handleToolLoan} className="bg-white w-full max-w-md rounded-[2.5rem] p-8 space-y-4 shadow-2xl">
                                         <div className="text-center mb-4">
-                                            <h3 className="text-sm font-black uppercase text-orange-500">PRESTAR HERRAMIENTA</h3>
-                                            <p className="text-[11px] font-black text-slate-800 mt-1">{loaningTool.name}</p>
+                                            <h3 className="text-sm font-black uppercase text-slate-800">PRESTAMO</h3>
+                                            <p className="text-[11px] font-black text-slate-400 mt-1">{loaningTool.name}</p>
                                         </div>
                                         <input required className="w-full p-4 bg-slate-50 rounded-2xl text-[12px] font-black border-2 border-transparent focus:border-blue-500 outline-none" value={loanData.tech} onChange={e => setLoanData({ ...loanData, tech: e.target.value })} placeholder="TÉCNICO QUE RECIBE" />
                                         <select required className="w-full p-4 bg-slate-50 rounded-2xl text-[11px] font-black border-2 border-transparent focus:border-blue-500 outline-none" value={loanData.supervisor} onChange={e => setLoanData({ ...loanData, supervisor: e.target.value })}>
@@ -648,14 +874,16 @@
                                         {filteredInventory.map(i => (
                                             <div key={i.docId} className="bg-white p-5 rounded-[2rem] flex flex-col sm:flex-row justify-between items-center shadow-sm border border-slate-100">
                                                 <div className="flex items-center gap-4 w-full sm:w-auto">
-                                                    {isAdminMode && (
+                                                    {isAdminMode && canDelete && (
                                                         <button type="button" onClick={() => deleteInventoryItem(i.docId, i.name)} className="p-3 bg-red-50 text-red-400 rounded-xl hover:bg-red-100 shrink-0">
                                                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                                                         </button>
                                                     )}
-                                                    <button type="button" onClick={() => setEditingItem(i)} className="p-3 bg-slate-50 text-slate-400 rounded-xl hover:text-blue-500 shrink-0">
-                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-                                                    </button>
+                                                    {canEditMaster && (
+                                                        <button type="button" onClick={() => setEditingItem(i)} className="p-3 bg-slate-50 text-slate-400 rounded-xl hover:text-blue-500 shrink-0">
+                                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                                                        </button>
+                                                    )}
                                                     <div className="flex flex-col">
                                                         <span className="font-black text-[13px] text-slate-800">{i.name}</span>
                                                         <span className="text-[9px] text-slate-400 font-mono font-bold">{i.id}</span>
@@ -788,7 +1016,7 @@
                                                         ? <button type="button" onClick={() => setLoaningTool(t)} className="px-6 py-3 bg-slate-900 text-white rounded-xl text-[10px] font-black">PRESTAR</button>
                                                         : <button type="button" onClick={() => setReturningTool(t)} className="px-6 py-3 bg-white border-2 border-orange-500 text-orange-500 rounded-xl text-[10px] font-black">DEVOLVER</button>
                                                     }
-                                                    {isAdminMode && <button type="button" onClick={() => deleteTool(t.docId, t.name)} className="p-3 bg-red-50 text-red-400 rounded-xl hover:bg-red-100">×</button>}
+                                                    {isAdminMode && canDelete && <button type="button" onClick={() => deleteTool(t.docId, t.name)} className="p-3 bg-red-50 text-red-400 rounded-xl hover:bg-red-100">×</button>}
                                                 </div>
                                             </div>
                                         ))}
@@ -837,7 +1065,7 @@
                                                         ? <button type="button" onClick={() => setLoaningKey(k)} className="w-full sm:w-auto px-6 py-3 bg-slate-900 text-white rounded-xl text-[10px] font-black">ENTREGAR</button>
                                                         : <button type="button" onClick={() => handleReturnKey(k)} className="w-full sm:w-auto px-6 py-3 bg-white border-2 border-blue-600 text-blue-600 rounded-xl text-[10px] font-black">RECIBIR LLAVE</button>
                                                     }
-                                                    {isAdminMode && <button type="button" onClick={() => deleteKey(k.docId, k.name)} className="p-3 bg-red-50 text-red-400 rounded-xl hover:bg-red-100">×</button>}
+                                                    {isAdminMode && canDelete && <button type="button" onClick={() => deleteKey(k.docId, k.name)} className="p-3 bg-red-50 text-red-400 rounded-xl hover:bg-red-100">×</button>}
                                                 </div>
                                             </div>
                                         ))}
